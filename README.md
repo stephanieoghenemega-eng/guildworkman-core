@@ -15,6 +15,42 @@ These mirror the domain already implemented server-side in
 trust-sensitive parts of that flow — holding money, recording reviews,
 issuing rewards — on-chain.
 
+## Architecture
+
+These are three separate contracts rather than one monolith:
+
+- **Independent storage and upgrade paths.** `escrow` handles money,
+  `reputation` handles reviews, `loyalty-token` handles a token balance
+  ledger. Each has a different risk profile and a different reason to change;
+  bugs or upgrades in one shouldn't force redeploying the others.
+- **Independent trust boundaries.** `escrow` and `loyalty-token` each have
+  their own `admin`/`minter` role — they don't need to trust each other's
+  internal state, only the caller's authenticated identity.
+- **Composability over coupling.** A future contract (or the backend) can
+  call into any of the three via their public functions without depending on
+  their private storage layout.
+
+### Suggested backend integration (not yet wired in)
+
+None of this is currently called from `SabiConnect-Backend`. The intended
+flow, if/when integrated, looks like:
+
+1. Client books a worker in the existing Java backend → backend (or the
+   client's wallet, if going non-custodial) calls `escrow.create_appointment`
+   with the agreed amount and a token address (e.g. a Stellar Asset Contract
+   wrapping USDC), instead of only charging via Paystack.
+2. Client marks the job done in the app → backend calls
+   `escrow.confirm_completion`, which pays the worker.
+3. Backend calls `reputation.submit_review` with the same `appointment_id`
+   right after the client submits their in-app review, so on-chain reviews
+   stay 1:1 with completed, paid appointments.
+4. Backend (as `minter`) calls `loyalty-token.mint` to reward the client
+   and/or worker some points for the completed appointment.
+
+This requires the backend to hold a Stellar keypair per role (or per user, if
+going non-custodial) and a Soroban RPC client — none of that exists in
+`SabiConnect-Backend` today.
+
 ## Prerequisites
 
 - Rust with the `wasm32v1-none` target: `rustup target add wasm32v1-none`
@@ -39,7 +75,25 @@ cargo test --workspace
 ```
 
 Each contract has unit tests under `contracts/<name>/src/test.rs` using
-`soroban-sdk`'s `testutils`.
+`soroban-sdk`'s `testutils`. Current coverage:
+
+- **escrow** (5 tests): happy-path completion pays the worker and drains the
+  contract's balance; cancellation refunds the client; a raised dispute
+  resolved in the worker's favor pays the worker; creating a duplicate
+  `appointment_id` is rejected; confirming an already-completed appointment
+  is rejected.
+- **reputation** (3 tests): submitting reviews updates the count/sum
+  aggregate and average correctly; reviewing the same `appointment_id` twice
+  is rejected; a rating outside 1-5 is rejected.
+- **loyalty-token** (6 tests): mint increases balance; transfer moves balance
+  between accounts; transferring more than the balance fails; approve +
+  transfer_from spends down the allowance correctly; burn reduces balance;
+  the admin can rotate the minter and the new minter can mint.
+
+These are unit tests against the in-process Soroban test host
+(`Env::default()` + `mock_all_auths()`), not integration tests against a real
+network — they don't cover cross-contract calls, real fee/resource limits, or
+multi-node consensus behavior.
 
 ## Deploy (testnet example)
 
@@ -70,6 +124,58 @@ each contract's `initialize` once.
 - `resolve_dispute(appointment_id: u64, refund_to_client: bool)` — admin-only
 - `get_appointment(appointment_id: u64) -> Appointment`
 
+#### Storage layout
+
+| `DataKey` variant | Storage | Holds |
+|---|---|---|
+| `Admin` | instance | The dispute arbiter's `Address`, set once in `initialize`. |
+| `Appointment(u64)` | persistent | An `Appointment { client, worker, token, amount, status }` keyed by `appointment_id`. `status` is one of `Funded`, `Completed`, `Cancelled`, `Disputed`, `Resolved`. |
+
+#### Errors
+
+| Variant | Code | Meaning |
+|---|---|---|
+| `AlreadyInitialized` | 1 | `initialize` called more than once. |
+| `NotInitialized` | 2 | `resolve_dispute` called before `initialize`. |
+| `AppointmentExists` | 3 | `create_appointment` reused an existing `appointment_id`. |
+| `AppointmentNotFound` | 4 | No appointment stored under that `appointment_id`. |
+| `InvalidStatus` | 5 | The requested transition doesn't apply to the appointment's current status (e.g. confirming a non-`Funded` appointment). |
+| `InvalidAmount` | 6 | `amount <= 0` in `create_appointment`. |
+| `NotAParticipant` | 7 | `raise_dispute` called by an address that is neither the client nor the worker. |
+
+#### CLI usage
+
+```sh
+# One-time setup
+stellar contract invoke --id $ESCROW --source admin --network testnet \
+  -- initialize --admin $ADMIN_ADDR
+
+# Client books worker WORKER_ADDR, depositing 10000 units of TOKEN_ADDR, appointment id 1
+stellar contract invoke --id $ESCROW --source client --network testnet \
+  -- create_appointment --appointment_id 1 --client $CLIENT_ADDR \
+     --worker $WORKER_ADDR --token $TOKEN_ADDR --amount 10000
+
+# Client confirms the job is done -> pays the worker
+stellar contract invoke --id $ESCROW --source client --network testnet \
+  -- confirm_completion --appointment_id 1
+
+# Client cancels before completion -> refunds the client
+stellar contract invoke --id $ESCROW --source client --network testnet \
+  -- cancel_appointment --appointment_id 1
+
+# Either party raises a dispute
+stellar contract invoke --id $ESCROW --source client --network testnet \
+  -- raise_dispute --appointment_id 1 --caller $CLIENT_ADDR
+
+# Admin resolves the dispute in the worker's favor
+stellar contract invoke --id $ESCROW --source admin --network testnet \
+  -- resolve_dispute --appointment_id 1 --refund_to_client false
+
+# Read appointment state
+stellar contract invoke --id $ESCROW --source admin --network testnet \
+  -- get_appointment --appointment_id 1
+```
+
 ### reputation
 
 - `submit_review(appointment_id: u64, client: Address, worker: Address, rating: u32, comment: String)` — 1-5 stars, one review per `appointment_id`
@@ -78,12 +184,141 @@ each contract's `initialize` once.
 - `get_review(worker: Address, index: u32) -> Option<Review>`
 - `get_review_count(worker: Address) -> u32`
 
+#### Storage layout
+
+| `DataKey` variant | Storage | Holds |
+|---|---|---|
+| `Reviewed(u64)` | persistent | A `bool` flag per `appointment_id`, used only to enforce one review per appointment. |
+| `Rating(Address)` | persistent | A `Rating { count, sum }` aggregate per worker; `sum` is the running total of all star ratings given. |
+| `Review(Address, u32)` | persistent | An individual `Review { client, rating, comment }`, keyed by `(worker, index)` where `index` is a per-worker sequence number starting at 0. |
+| `ReviewCount(Address)` | persistent | The next free `index` for a given worker — also doubles as the total review count. |
+
+#### Errors
+
+| Variant | Code | Meaning |
+|---|---|---|
+| `InvalidRating` | 1 | `rating` outside the 1-5 range. |
+| `AlreadyReviewed` | 2 | `submit_review` called twice for the same `appointment_id`. |
+| `NoReviews` | 3 | `get_average_rating_x100` called for a worker with zero reviews (avoids a divide-by-zero). |
+
+#### CLI usage
+
+```sh
+stellar contract invoke --id $REPUTATION --source client --network testnet \
+  -- submit_review --appointment_id 1 --client $CLIENT_ADDR \
+     --worker $WORKER_ADDR --rating 5 --comment "Great job, on time"
+
+stellar contract invoke --id $REPUTATION --source admin --network testnet \
+  -- get_rating --worker $WORKER_ADDR
+
+stellar contract invoke --id $REPUTATION --source admin --network testnet \
+  -- get_average_rating_x100 --worker $WORKER_ADDR
+
+stellar contract invoke --id $REPUTATION --source admin --network testnet \
+  -- get_review --worker $WORKER_ADDR --index 0
+
+stellar contract invoke --id $REPUTATION --source admin --network testnet \
+  -- get_review_count --worker $WORKER_ADDR
+```
+
 ### loyalty-token
 
 - `initialize(admin: Address, minter: Address, decimals: u32, name: String, symbol: String)`
 - `set_minter(new_minter: Address)` — admin-only
 - `mint(to: Address, amount: i128)` — minter-only
 - `transfer`, `transfer_from`, `approve`, `allowance`, `burn`, `balance`, `decimals`, `name`, `symbol` — standard SEP-41 token surface
+
+#### Storage layout
+
+| `DataKey` variant | Storage | Holds |
+|---|---|---|
+| `Admin` | instance | The admin `Address`, allowed to call `set_minter`. |
+| `Minter` | instance | The only `Address` allowed to call `mint`. |
+| `Metadata` | instance | `TokenMetadata { decimals, name, symbol }`. |
+| `Balance(Address)` | persistent | The `i128` token balance for a given holder. |
+| `Allowance(Address, Address)` | temporary | An `AllowanceValue { amount, expiration_ledger }` for `(from, spender)`, cleared once `expiration_ledger` passes. |
+
+#### Errors
+
+| Variant | Code | Meaning |
+|---|---|---|
+| `AlreadyInitialized` | 1 | `initialize` called more than once. |
+| `NotInitialized` | 2 | `mint`/`set_minter` called before `initialize`. |
+| `InsufficientBalance` | 3 | `transfer`/`transfer_from`/`burn` amount exceeds the sender's balance. |
+| `InsufficientAllowance` | 4 | `transfer_from` amount exceeds the spender's remaining allowance. |
+| `InvalidAmount` | 5 | A negative/zero amount passed where a positive amount is required. |
+| `NotAuthorized` | 6 | Reserved for authorization failures; current checks rely on `require_auth()` panicking directly rather than returning this variant. |
+
+#### CLI usage
+
+```sh
+stellar contract invoke --id $LOYALTY --source admin --network testnet \
+  -- initialize --admin $ADMIN_ADDR --minter $MINTER_ADDR \
+     --decimals 2 --name '"Sabi Points"' --symbol '"SABI"'
+
+stellar contract invoke --id $LOYALTY --source admin --network testnet \
+  -- set_minter --new_minter $NEW_MINTER_ADDR
+
+stellar contract invoke --id $LOYALTY --source minter --network testnet \
+  -- mint --to $CLIENT_ADDR --amount 500
+
+stellar contract invoke --id $LOYALTY --source admin --network testnet \
+  -- balance --id $CLIENT_ADDR
+
+stellar contract invoke --id $LOYALTY --source client --network testnet \
+  -- transfer --from $CLIENT_ADDR --to $WORKER_ADDR --amount 100
+
+stellar contract invoke --id $LOYALTY --source client --network testnet \
+  -- approve --from $CLIENT_ADDR --spender $SPENDER_ADDR \
+     --amount 200 --expiration_ledger 5000000
+
+stellar contract invoke --id $LOYALTY --source admin --network testnet \
+  -- allowance --from $CLIENT_ADDR --spender $SPENDER_ADDR
+
+stellar contract invoke --id $LOYALTY --source spender --network testnet \
+  -- transfer_from --spender $SPENDER_ADDR --from $CLIENT_ADDR \
+     --to $WORKER_ADDR --amount 150
+
+stellar contract invoke --id $LOYALTY --source client --network testnet \
+  -- burn --from $CLIENT_ADDR --amount 50
+
+stellar contract invoke --id $LOYALTY --source admin --network testnet \
+  -- decimals
+stellar contract invoke --id $LOYALTY --source admin --network testnet \
+  -- name
+stellar contract invoke --id $LOYALTY --source admin --network testnet \
+  -- symbol
+```
+
+## Security considerations / known limitations
+
+- **Unaudited.** None of these contracts have had an independent security
+  review. Do not move real funds through `escrow` or mint real value through
+  `loyalty-token` on mainnet before getting one.
+- **Trusted token contract.** `escrow` assumes the `token` address passed to
+  `create_appointment` behaves like a well-formed SEP-41/Stellar Asset
+  Contract. A malicious or buggy token contract (e.g. one that lies about
+  transfer success) could break escrow's invariants.
+- **No partial completion or partial refunds.** `escrow` is all-or-nothing:
+  the full amount goes to either the client or the worker. There's no
+  mechanism for a partially-completed job.
+- **Single point of trust for admin.** The `escrow` admin unilaterally
+  decides disputes, and the `loyalty-token` admin unilaterally controls who
+  can mint. Both are single-key roles with no timelock, multisig, or on-chain
+  governance — compromising that key compromises the contract.
+- **No spam/rate limiting beyond one-review-per-appointment.** `reputation`
+  only prevents double-reviewing the same `appointment_id`; it does not
+  prevent a client and worker from colluding to create fake appointments
+  (that responsibility sits with whatever system calls `create_appointment`
+  and `submit_review` with real appointment IDs — today, nothing does, since
+  the Java backend isn't integrated yet).
+- **No pause/upgrade mechanism.** None of the three contracts have an
+  emergency pause switch or upgrade path built in; fixing a deployed bug
+  means deploying a new contract and migrating state/callers manually.
+- **Comments are not authenticated content.** `reputation`'s `comment` field
+  is an arbitrary `String` supplied by the reviewer with no length cap or
+  content moderation — treat it as untrusted user input wherever it's
+  displayed.
 
 ## Notes / follow-ups
 
@@ -92,3 +327,7 @@ each contract's `initialize` once.
   handle native fiat payments, which stay on Paystack in the existing backend.
 - These contracts have not been audited. Get an independent security review
   before moving any real funds through `escrow` or `loyalty-token` on mainnet.
+
+## License
+
+MIT — see [LICENSE](./LICENSE).
