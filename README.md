@@ -101,11 +101,12 @@ export the values into your shell, IDE run configuration, or `docker run --env-f
 
 ## Running locally
 
+A `docker-compose.yml` is provided for the database, so you don't need a local
+PostgreSQL install:
+
 ```sh
-# create the `service` database in PostgreSQL first, then:
-export DATABASE_URL=jdbc:postgresql://localhost:5432/service
-export DATABASE_USERNAME=postgres
-export DATABASE_PASSWORD=yourpassword
+docker compose up -d   # starts Postgres on localhost:5432, db=service user=postgres password=password
+
 export MAIL_API_KEY=...
 export CLOUDINARY_API_NAME=...
 export CLOUDINARY_API_KEY=...
@@ -114,6 +115,10 @@ export PAYSTACK_SECRET_KEY=...
 
 ./mvnw spring-boot:run
 ```
+
+`DATABASE_URL`/`DATABASE_USERNAME`/`DATABASE_PASSWORD` already default to match
+the `docker-compose.yml` credentials, so you don't need to export them unless
+you're pointing at a different database.
 
 The app starts on the default Spring Boot port (`8080`) unless overridden.
 
@@ -177,13 +182,30 @@ CORS is restricted to `https://sabiconnect.vercel.app/` on `MailController` and
 
 ## Testing
 
+Tests are `@SpringBootTest`-based and need a real database — bring up the
+Postgres container first:
+
 ```sh
+docker compose up -d
 ./mvnw test
 ```
+
+CI runs the same suite against a Postgres service container on every push/PR
+to `development` (`.github/workflows/test.yml`).
 
 Existing tests cover `MailServiceTest`, `ClientServiceTest`,
 `SkilledWorkerServiceTest`, `AppointmentServiceTest`, `ReviewServiceTest`, and
 `SkillServiceTest`.
+
+> **Known issue:** running the full suite against a fresh database currently
+> fails (1 failure, 6 errors as of this writing) — mostly test-isolation bugs
+> (no transactional rollback between tests, so data inserted by one test
+> collides with the next: duplicate-key violations, ID mismatches, "not found"
+> errors depending on run order) plus a broken mock in `PaymentServiceImplTest`
+> (`OkHttpClient.newCall()` returns null). This predates the Docker/CI setup —
+> it just wasn't previously possible to run the suite end-to-end to notice.
+> Good first contribution: add `@Transactional` (or per-test cleanup) to the
+> affected test classes and fix the `PaymentServiceImplTest` mock setup.
 
 ## Branching
 
