@@ -169,7 +169,7 @@ public class ClientServiceImpl implements ClientService {
 
     @Override
     public Client findById(Long clientId) {
-        return clientRepository.findById(clientId).orElseThrow(()-> new SabiConnectException("client not found"));
+        return clientRepository.findById(clientId).orElseThrow(()-> new GuildWorkmanException("client not found"));
     }
 
     @Override
@@ -192,10 +192,10 @@ public class ClientServiceImpl implements ClientService {
             if (client.getPassword().equals(password)) {
                 return loginResponseMapper(client);
             } else {
-                throw new SabiConnectException("Invalid email or password");
+                throw new GuildWorkmanException("Invalid email or password");
             }
         } else {
-            throw new SabiConnectException("user with the email "+email+" does not exist");
+            throw new GuildWorkmanException("user with the email "+email+" does not exist");
         }
     }
 

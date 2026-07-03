@@ -8,7 +8,7 @@ import com.skilledservice.ClientService.dto.requests.*;
 import com.skilledservice.ClientService.dto.responses.*;
 import com.skilledservice.ClientService.exceptions.InvalidEmailFoundException;
 import com.skilledservice.ClientService.exceptions.InvalidPasswordException;
-import com.skilledservice.ClientService.exceptions.SabiConnectException;
+import com.skilledservice.ClientService.exceptions.GuildWorkmanException;
 import com.skilledservice.ClientService.data.models.SkilledWorker;
 import com.skilledservice.ClientService.data.repository.SkilledWorkerRepository;
 import com.skilledservice.ClientService.exceptions.UserNotFoundException;
@@ -80,18 +80,18 @@ public class SkilledWorkerServiceImpl implements SkilledWorkerService {
 
     @Override
     public SkilledWorker findById(Long skilledWorkerId) {
-        return skilledWorkerRepository.findById(skilledWorkerId).orElseThrow(() -> new SabiConnectException("user not found"));
+        return skilledWorkerRepository.findById(skilledWorkerId).orElseThrow(() -> new GuildWorkmanException("user not found"));
     }
     @Override
     public SkilledWorker findSkillByFullName(String skilledWorkerFullName) {
-        return skilledWorkerRepository.findSkillByFullName(skilledWorkerFullName).orElseThrow(() -> new SabiConnectException("user not found"));
+        return skilledWorkerRepository.findSkillByFullName(skilledWorkerFullName).orElseThrow(() -> new GuildWorkmanException("user not found"));
     }
     @Override
     public AcceptAppointmentResponse acceptAppointment(AcceptAppointmentRequest acceptAppointmentRequest) {
         SkilledWorker skilledWorker = skilledWorkerRepository.findById(acceptAppointmentRequest.getId())
-                .orElseThrow(()-> new SabiConnectException("user not found"));
+                .orElseThrow(()-> new GuildWorkmanException("user not found"));
         Appointment appointment = appointmentService.findAppointmentById(acceptAppointmentRequest.getId())
-                .orElseThrow(()-> new SabiConnectException("appointment not found"));
+                .orElseThrow(()-> new GuildWorkmanException("appointment not found"));
         skilledWorker.getAppointment().add(appointment);
         return appointmentService.acceptAppointment(acceptAppointmentRequest);
     }
@@ -128,10 +128,10 @@ public class SkilledWorkerServiceImpl implements SkilledWorkerService {
             if (skilledWorker.getPassword().equals(password)) {
                 return loginResponseMapper(skilledWorker);
             } else {
-                throw new SabiConnectException("Invalid username or password");
+                throw new GuildWorkmanException("Invalid username or password");
             }
         } else {
-            throw new SabiConnectException("Invalid username or password");
+            throw new GuildWorkmanException("Invalid username or password");
         }
     }
 

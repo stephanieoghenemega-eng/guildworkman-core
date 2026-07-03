@@ -42,7 +42,7 @@
 #        uses: docker/build-push-action@v5
 #        with:
 #          push: true
-#          tags: meshackyaro/sabiconnect:latest
+#          tags: meshackyaro/guildworkman-api:latest
 
 #
 #name: Java CI with Maven
@@ -77,7 +77,7 @@
 #        uses: docker/build-push-action@v5
 #        with:
 #          push: true
-#          tags: meshackyaro/sabiconnect:latest
+#          tags: meshackyaro/guildworkman-api:latest
 #
 #  deploy:
 #    name: Deploy to Server
@@ -96,10 +96,10 @@
 #          username: ${{ secrets.SSH_USERNAME }}
 #          key: ${{ secrets.SSH_PRIVATE_KEY }}
 #          script: |
-#            docker pull meshackyaro/sabiconnect:latest
+#            docker pull meshackyaro/guildworkman-api:latest
 #            docker stop my-container || true
 #            docker rm my-container || true
-#            docker run -d --name my-container -p 80:80 meshackyaro/sabiconnect:latest
+#            docker run -d --name my-container -p 80:80 meshackyaro/guildworkman-api:latest
 
 #name: Deploy Dockerhub
 #
@@ -139,9 +139,9 @@
 #          password: ${{ secrets.DOCKERHUB_TOKEN }}
 #
 #      - name: Build Docker image
-#        run: docker build -t meshackyaro/sabiconnect:latest .
+#        run: docker build -t meshackyaro/guildworkman-api:latest .
 #      - name: Push Docker image to Docker Hub
-#        run: docker push meshackyaro/sabiconnect:latest
+#        run: docker push meshackyaro/guildworkman-api:latest
 #
 #
 #  deploy:
@@ -159,10 +159,10 @@
 #
 #      - name: Deploy Docker Container
 #        run: |
-#          docker pull meshackyaro/sabiconnect:latest
+#          docker pull meshackyaro/guildworkman-api:latest
 #          docker stop my-container || true
 #          docker rm my-container || true
-#          docker run -d --name my-container -p 80:80 meshackyaro/sabiconnect:latest
+#          docker run -d --name my-container -p 80:80 meshackyaro/guildworkman-api:latest
 
 
 
@@ -203,10 +203,10 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker image
-        run: docker build -t meshackyaro/sabiconnect:latest .
+        run: docker build -t meshackyaro/guildworkman-api:latest .
 
       - name: Push Docker image to Docker Hub
-        run: docker push meshackyaro/sabiconnect:latest
+        run: docker push meshackyaro/guildworkman-api:latest
 
   deploy:
     name: Deploy Docker Container
@@ -223,7 +223,7 @@ jobs:
 
       - name: Deploy Docker Container
         run: |
-          docker pull meshackyaro/sabiconnect:latest
+          docker pull meshackyaro/guildworkman-api:latest
           docker stop my-container || true
           docker rm my-container || true
-          docker run -d --name my-container -p 80:80 meshackyaro/sabiconnect:latest
+          docker run -d --name my-container -p 80:80 meshackyaro/guildworkman-api:latest

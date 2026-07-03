@@ -25,7 +25,7 @@ package com.skilledservice.ClientService.config;
 //    public CorsConfigurationSource corsConfigurationSource() {
 //        CorsConfiguration configuration = new CorsConfiguration();
 //        configuration.setAllowCredentials(true);
-//        configuration.setAllowedOrigins(List.of("https://sabiconnect.vercel.app/", "http://localhost:8080"));
+//        configuration.setAllowedOrigins(List.of("https://guildworkman.vercel.app/", "http://localhost:8080"));
 //        configuration.addAllowedHeader("*");
 //        configuration.addAllowedMethod("*");
 //        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
@@ -73,7 +73,7 @@ public class SecurityConfig {
 //    @Bean
 //    public CorsConfigurationSource corsConfigurationSource() {
 //        CorsConfiguration configuration = new CorsConfiguration();
-//        configuration.setAllowedOrigins(Arrays.asList("http://localhost:3000", "https://sabiconnect.vercel.app"));
+//        configuration.setAllowedOrigins(Arrays.asList("http://localhost:3000", "https://guildworkman.vercel.app"));
 //        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
 //        configuration.setAllowedHeaders(Arrays.asList("Content-Type", "Authorization"));
 //        configuration.setAllowCredentials(true);

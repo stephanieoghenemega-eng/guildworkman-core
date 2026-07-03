@@ -9,10 +9,10 @@
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.skilledservice</groupId>
-	<artifactId>ClientService</artifactId>
+	<artifactId>guildworkman-api</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
-	<name>ClientService</name>
-	<description>project on increasing the access of skilled workers</description>
+	<name>guildworkman-api</name>
+	<description>GuildWorkman API -- backend for a marketplace increasing access to skilled workers</description>
 	<url/>
 	<licenses>
 		<license/>

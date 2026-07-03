@@ -10,7 +10,7 @@ import com.skilledservice.ClientService.exceptions.AppointmentNotFoundException;
 import com.skilledservice.ClientService.data.models.Appointment;
 import com.skilledservice.ClientService.data.constants.AppointmentStatus;
 import com.skilledservice.ClientService.data.repository.AppointmentRepository;
-import com.skilledservice.ClientService.exceptions.SabiConnectException;
+import com.skilledservice.ClientService.exceptions.GuildWorkmanException;
 import com.skilledservice.ClientService.services.ServiceUtils.AppointmentService;
 import lombok.AllArgsConstructor;
 import org.modelmapper.ModelMapper;
@@ -105,7 +105,7 @@ public class AppointmentServiceImpl implements AppointmentService {
     @Override
     public AcceptAppointmentResponse acceptAppointment(AcceptAppointmentRequest request) {
         Appointment appointment = appointmentRepository.findById(request.getAppointmentId())
-                .orElseThrow(()-> new SabiConnectException("appointment not found"));
+                .orElseThrow(()-> new GuildWorkmanException("appointment not found"));
 //        appointment.setClient(clientService.findById(request.getClientId()));
 //        appointment.setSkilledWorker(request.getSkilledWorker());
         appointment.setStatus(AppointmentStatus.ACCEPTED);

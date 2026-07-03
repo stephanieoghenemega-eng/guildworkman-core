@@ -5,7 +5,7 @@ import com.skilledservice.ClientService.dto.responses.PostReviewResponse;
 import com.skilledservice.ClientService.data.models.Review;
 import com.skilledservice.ClientService.data.models.SkilledWorker;
 import com.skilledservice.ClientService.data.repository.ReviewRepository;
-import com.skilledservice.ClientService.exceptions.SabiConnectException;
+import com.skilledservice.ClientService.exceptions.GuildWorkmanException;
 import com.skilledservice.ClientService.services.ServiceUtils.ReviewService;
 import com.skilledservice.ClientService.services.ServiceUtils.SkilledWorkerService;
 import org.springframework.stereotype.Service;
@@ -29,7 +29,7 @@ public class ReviewServiceImpl implements ReviewService {
 
         Review review = new Review();
         SkilledWorker skilledWorker = skilledWorkerService.findById(postReview.getSkilledWorker().getId());
-        if (skilledWorker == null) throw new SabiConnectException("skilled worker not found");
+        if (skilledWorker == null) throw new GuildWorkmanException("skilled worker not found");
         review.setSkilledWorker(skilledWorker);
         review.setReview(postReview.getReview());
         review.setReviewDate(LocalDateTime.now());

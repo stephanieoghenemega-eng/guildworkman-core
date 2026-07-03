@@ -1,8 +1,11 @@
-# SabiConnect Backend
+# GuildWorkman API
 
-Spring Boot backend for **Sabi-Connect**, a marketplace that connects clients
+Spring Boot backend for **GuildWorkman**, a marketplace that connects clients
 with skilled workers (electricians, plumbers, barbers, etc.) for booked
-appointments and consultations, with in-app payments and reviews.
+appointments and consultations, with in-app payments and reviews. GuildWorkman
+is a rebrand of the original Sabi-Connect project, extended with Soroban smart
+contracts (see [`guildworkman-contracts`](https://github.com/workman-labs/guildworkman-contracts))
+for on-chain escrow, reputation, and loyalty rewards.
 
 ## Tech stack
 
@@ -50,7 +53,7 @@ Core domain entities: `Client`, `SkilledWorker`, `Skill`, `Address`,
 - Admin operations (`AdminServiceImpl`)
 - Global exception handling with typed exceptions (`UserNotFoundException`,
   `AppointmentNotFoundException`, `InvalidEmailFoundException`,
-  `InvalidPasswordException`, `SabiConnectException`)
+  `InvalidPasswordException`, `GuildWorkmanException`)
 
 Two controllers exist in the tree but are currently **commented out and inactive**:
 `PaymentController` (`/payment`) and `mapController/MapController` (`/showMap`).
@@ -125,7 +128,7 @@ The app starts on the default Spring Boot port (`8080`) unless overridden.
 ## Running with Docker
 
 ```sh
-docker build -t sabiconnect-backend .
+docker build -t guildworkman-api .
 docker run -p 8080:8080 \
   -e DATABASE_URL=jdbc:postgresql://<host>:5432/service \
   -e DATABASE_USERNAME=postgres \
@@ -133,7 +136,7 @@ docker run -p 8080:8080 \
   -e MAIL_API_KEY=... \
   -e CLOUDINARY_API_NAME=... -e CLOUDINARY_API_KEY=... -e CLOUDINARY_API_SECRET=... \
   -e PAYSTACK_SECRET_KEY=... \
-  sabiconnect-backend
+  guildworkman-api
 ```
 
 The Dockerfile is a two-stage build: Maven build stage (`maven:3.8.7`) →
@@ -177,7 +180,7 @@ All endpoints are prefixed `/api/v1/...`. Responses are wrapped in a common
 |---|---|---|
 | POST | `/sendMail` | Send a transactional email |
 
-CORS is restricted to `https://sabiconnect.vercel.app/` on `MailController` and
+CORS is restricted to `https://guildworkman.vercel.app/` on `MailController` and
 `SkilledWorkerController`; `ClientController` currently allows all origins (`*`).
 
 ## Testing

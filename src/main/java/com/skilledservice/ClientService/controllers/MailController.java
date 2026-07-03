@@ -10,7 +10,7 @@ import org.springframework.web.bind.annotation.*;
 
 import static org.springframework.http.HttpStatus.CREATED;
 
-@CrossOrigin(origins = "https://sabiconnect.vercel.app/")
+@CrossOrigin(origins = "https://guildworkman.vercel.app/")
 @AllArgsConstructor
 @RestController
 @RequestMapping("/api/v1/mail")

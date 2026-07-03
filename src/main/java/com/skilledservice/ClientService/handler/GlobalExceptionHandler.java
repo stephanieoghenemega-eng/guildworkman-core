@@ -34,8 +34,8 @@ public class GlobalExceptionHandler {
                         "error", exception.getMessage(),
                         "success", false));
     }
-    @ExceptionHandler(SabiConnectException.class)
-    public ResponseEntity<?> handleSabiConnectException(SabiConnectException exception){
+    @ExceptionHandler(GuildWorkmanException.class)
+    public ResponseEntity<?> handleGuildWorkmanException(GuildWorkmanException exception){
         return ResponseEntity.status(BAD_REQUEST)
                 .body(Map.of(
                         "error", exception.getMessage(),

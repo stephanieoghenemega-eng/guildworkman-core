@@ -20,7 +20,7 @@
 //        SendMailRequest sendMailRequest = new SendMailRequest();
 //        sendMailRequest.setRecipientEmail(email);
 //        sendMailRequest.setRecipientName("Meshack Yaro");
-//        sendMailRequest.setSubject("Welcome "+sendMailRequest.getRecipientName()+" to SabiConnect, your place of ease and comfort");
+//        sendMailRequest.setSubject("Welcome "+sendMailRequest.getRecipientName()+" to GuildWorkman, your place of ease and comfort");
 //        sendMailRequest.setContent("Welcome");
 //        var response = mailService.sendMail(sendMailRequest);
 //        assertThat(response).isNotNull();

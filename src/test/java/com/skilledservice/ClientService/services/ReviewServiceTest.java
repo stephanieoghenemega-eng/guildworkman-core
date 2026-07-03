@@ -6,7 +6,7 @@
 //import com.skilledservice.ClientService.dto.responses.ClientRegistrationResponse;
 //import com.skilledservice.ClientService.dto.responses.PostReviewResponse;
 //import com.skilledservice.ClientService.dto.responses.SkilledWorkerRegistrationResponse;
-//import com.skilledservice.ClientService.exceptions.SabiConnectException;
+//import com.skilledservice.ClientService.exceptions.GuildWorkmanException;
 //import com.skilledservice.ClientService.data.models.Address;
 //import com.skilledservice.ClientService.data.repository.AddressRepository;
 //import com.skilledservice.ClientService.data.repository.ReviewRepository;
@@ -60,7 +60,7 @@
 //        assertThat(reviewResponse.getReview()).isEqualTo("impressive work ethic");
 //        assertThat(reviewResponse.getReviewerId());
 //        var review = reviewRepository.findById(reviewResponse.getPostId())
-//                .orElseThrow(() -> new SabiConnectException("Review not found"));
+//                .orElseThrow(() -> new GuildWorkmanException("Review not found"));
 //        assertThat(review.getReview()).isEqualTo("impressive work ethic");
 //        assertThat(reviewRepository.count()).isEqualTo(1L);
 //
