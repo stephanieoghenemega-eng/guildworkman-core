@@ -1,6 +1,6 @@
 #![no_std]
 
-//! Reputation contract for Sabi-Connect.
+//! Reputation contract for GuildWorkman.
 //!
 //! Stores skilled-worker reviews immutably on-chain, one per completed
 //! appointment, and maintains a running rating aggregate per worker.

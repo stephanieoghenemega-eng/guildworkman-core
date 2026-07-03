@@ -1,6 +1,6 @@
 #![no_std]
 
-//! Escrow contract for Sabi-Connect appointments.
+//! Escrow contract for GuildWorkman appointments.
 //!
 //! A client funds an appointment by depositing payment into the contract.
 //! Funds sit in escrow until the client confirms the job is done, at which
