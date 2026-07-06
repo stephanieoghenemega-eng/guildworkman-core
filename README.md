@@ -20,7 +20,7 @@ for on-chain escrow, reputation, and loyalty rewards.
 
 ## Architecture
 
-Single Spring Boot module, package root `com.skilledservice.ClientService`, in a
+Single Spring Boot module, package root `com.guildworkman.api`, in a
 conventional layered structure:
 
 ```
