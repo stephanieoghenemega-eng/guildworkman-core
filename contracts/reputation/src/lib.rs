@@ -58,7 +58,7 @@ impl ReputationContract {
     ) -> Result<(), Error> {
         client.require_auth();
 
-        if rating < 1 || rating > 5 {
+        if !(1..=5).contains(&rating) {
             return Err(Error::InvalidRating);
         }
 
