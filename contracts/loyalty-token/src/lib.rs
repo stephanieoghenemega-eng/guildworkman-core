@@ -1,6 +1,6 @@
 #![no_std]
 
-//! Loyalty rewards token for Sabi-Connect.
+//! Loyalty rewards token for GuildWorkman.
 //!
 //! A SEP-41-style fungible token. The backend (as `minter`) rewards clients
 //! and workers with points on completed appointments; holders can transfer
@@ -55,7 +55,7 @@ pub struct LoyaltyToken;
 #[contractimpl]
 impl LoyaltyToken {
     /// One-time setup. `admin` can rotate the minter; `minter` is the only
-    /// address allowed to mint new reward points (typically the Sabi-Connect
+    /// address allowed to mint new reward points (typically the GuildWorkman
     /// backend's service account).
     pub fn initialize(
         env: Env,

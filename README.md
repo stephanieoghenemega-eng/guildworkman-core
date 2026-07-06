@@ -1,7 +1,8 @@
-# sabiconnect-contracts
+# guildworkman-contracts
 
-Soroban (Stellar) smart contracts for Sabi-Connect, the skilled-worker
-booking marketplace. This workspace has three independent contracts:
+Soroban (Stellar) smart contracts for GuildWorkman (a rebrand of the original
+Sabi-Connect project), the skilled-worker booking marketplace. This workspace
+has three independent contracts:
 
 | Contract | Path | Purpose |
 |---|---|---|
@@ -10,7 +11,7 @@ booking marketplace. This workspace has three independent contracts:
 | `loyalty-token` | `contracts/loyalty-token` | A SEP-41-style fungible token used to reward clients/workers with points on completed appointments. Only a designated `minter` (the backend's service account) can mint. |
 
 These mirror the domain already implemented server-side in
-[`SabiConnect-Backend`](https://github.com/workman-labs/SabiConnect-Backend)
+[`guildworkman-api`](https://github.com/workman-labs/guildworkman-api)
 (`AppointmentService`, `ReviewService`, `TransactionService`), moving the
 trust-sensitive parts of that flow — holding money, recording reviews,
 issuing rewards — on-chain.
@@ -32,7 +33,7 @@ These are three separate contracts rather than one monolith:
 
 ### Suggested backend integration (not yet wired in)
 
-None of this is currently called from `SabiConnect-Backend`. The intended
+None of this is currently called from `guildworkman-api`. The intended
 flow, if/when integrated, looks like:
 
 1. Client books a worker in the existing Java backend → backend (or the
@@ -49,7 +50,7 @@ flow, if/when integrated, looks like:
 
 This requires the backend to hold a Stellar keypair per role (or per user, if
 going non-custodial) and a Soroban RPC client — none of that exists in
-`SabiConnect-Backend` today.
+`guildworkman-api` today.
 
 ## Prerequisites
 
@@ -63,7 +64,7 @@ going non-custodial) and a Soroban RPC client — none of that exists in
 ```sh
 stellar contract build
 # or, per-contract:
-cargo build --target wasm32v1-none --release -p escrow
+cargo build --target wasm32v1-none --release -p guildworkman-escrow
 ```
 
 Wasm output lands in `target/wasm32v1-none/release/*.wasm`.
@@ -101,7 +102,7 @@ multi-node consensus behavior.
 stellar keys generate deployer --network testnet --fund
 
 stellar contract deploy \
-  --wasm target/wasm32v1-none/release/escrow.wasm \
+  --wasm target/wasm32v1-none/release/guildworkman_escrow.wasm \
   --source deployer --network testnet
 
 stellar contract invoke \
@@ -109,8 +110,9 @@ stellar contract invoke \
   -- initialize --admin <ADMIN_ADDRESS>
 ```
 
-Repeat `deploy` for `reputation.wasm` and `loyalty_token.wasm`, then call
-each contract's `initialize` once.
+Repeat `deploy` for `guildworkman_reputation.wasm` and
+`guildworkman_loyalty_token.wasm`, then call each contract's `initialize`
+once.
 
 ## Contract interfaces
 
@@ -254,7 +256,7 @@ stellar contract invoke --id $REPUTATION --source admin --network testnet \
 ```sh
 stellar contract invoke --id $LOYALTY --source admin --network testnet \
   -- initialize --admin $ADMIN_ADDR --minter $MINTER_ADDR \
-     --decimals 2 --name '"Sabi Points"' --symbol '"SABI"'
+     --decimals 2 --name '"GuildWorkman Points"' --symbol '"GWP"'
 
 stellar contract invoke --id $LOYALTY --source admin --network testnet \
   -- set_minter --new_minter $NEW_MINTER_ADDR
