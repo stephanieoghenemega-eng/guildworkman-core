@@ -9,10 +9,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
+@Transactional
 class SkilledWorkerServiceImplTest {
 
     @Autowired
@@ -29,9 +31,8 @@ class SkilledWorkerServiceImplTest {
         request.setPassword("olodoolodo1");
         skilledWorkerService.registerSkilledWorker(request);
 
-        SkilledWorker found = skilledWorkerRepository.findByEmail("olodo@gmail.com").orElseThrow();
-        System.out.println(found.getPassword());
+        SkilledWorker found = skilledWorkerRepository.findByEmail("olodo1@gmail.com").orElseThrow();
 
-        System.out.println(passwordEncoder.matches(found.getPassword(), "olodoolodo1"));
+        assertTrue(passwordEncoder.matches("olodoolodo1", found.getPassword()));
     }
 }

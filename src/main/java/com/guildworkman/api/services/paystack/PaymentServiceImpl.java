@@ -20,9 +20,13 @@ import org.springframework.web.client.HttpClientErrorException;
 public class PaymentServiceImpl implements PaymentService {
 
     private final AppConfig appConfig;
+    private final OkHttpClient client;
+    private final RestTemplate restTemplate;
 
-    public PaymentServiceImpl(AppConfig appConfig) {
+    public PaymentServiceImpl(AppConfig appConfig, OkHttpClient client, RestTemplate restTemplate) {
         this.appConfig = appConfig;
+        this.client = client;
+        this.restTemplate = restTemplate;
     }
 
     @Override
@@ -39,7 +43,6 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     public ResponseBodyDetails<?> initiatePayment(PaymentRequest paymentRequest) {
-        OkHttpClient client = new OkHttpClient();
         RequestBody requestBody = new FormBody.Builder()
                .add("amount", String.valueOf(paymentRequest.getAmount()))
                .add("email", paymentRequest.getEmail())
@@ -67,22 +70,24 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     public ResponseBodyDetails<?> verifyPayment(String reference) {
-        OkHttpClient client = new OkHttpClient();
         Request request = new Request.Builder()
                 .url(appConfig.getPayStackVerifyPaymentUrl() + reference)
                 .header("Authorization", "Bearer " + appConfig.getPayStackSecretKey())
                 .build();
         try (Response response = client.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                assert response.body() != null;
-                throw new Exception("PayStack payment verification request field: " + response.body().string());
-            }
             assert response.body() != null;
             String responseBody = response.body().string();
-            return ResponseBodyDetails.builder().message("PayStack Payment verification request failed: " + response).build();
+            if (!response.isSuccessful()) {
+                throw new Exception("PayStack payment verification request failed: " + responseBody);
+            }
+            JSONObject jsonObject = new JSONObject(responseBody);
+            return ResponseBodyDetails.builder()
+                    .message(jsonObject.getString("message"))
+                    .status(String.valueOf(response.code()))
+                    .build();
         } catch (Exception e) {
             e.printStackTrace();
-            throw new RuntimeException("Error while initiating payment request --> " + e.getMessage());
+            throw new RuntimeException("Error while verifying payment request --> " + e.getMessage());
         }
 
     }
@@ -109,10 +114,9 @@ public class PaymentServiceImpl implements PaymentService {
         }
     }
 
-    private static @Nullable PaymentResponse getPaymentResponse(PaymentRequest paymentRequest, HttpHeaders headers, String payStackUrl) {
+    private @Nullable PaymentResponse getPaymentResponse(PaymentRequest paymentRequest, HttpHeaders headers, String payStackUrl) {
         HttpEntity<PaymentRequest> request = new HttpEntity<>(paymentRequest, headers);
 
-        RestTemplate restTemplate = new RestTemplate();
         try {
             ResponseEntity<PaymentResponse> response = restTemplate.postForEntity(payStackUrl, request, PaymentResponse.class);
             return response.getBody();

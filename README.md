@@ -200,15 +200,11 @@ Existing tests cover `MailServiceTest`, `ClientServiceTest`,
 `SkilledWorkerServiceTest`, `AppointmentServiceTest`, `ReviewServiceTest`, and
 `SkillServiceTest`.
 
-> **Known issue:** running the full suite against a fresh database currently
-> fails (1 failure, 6 errors as of this writing) — mostly test-isolation bugs
-> (no transactional rollback between tests, so data inserted by one test
-> collides with the next: duplicate-key violations, ID mismatches, "not found"
-> errors depending on run order) plus a broken mock in `PaymentServiceImplTest`
-> (`OkHttpClient.newCall()` returns null). This predates the Docker/CI setup —
-> it just wasn't previously possible to run the suite end-to-end to notice.
-> Good first contribution: add `@Transactional` (or per-test cleanup) to the
-> affected test classes and fix the `PaymentServiceImplTest` mock setup.
+All 14 tests pass as of this writing. Test-isolation issues (missing
+`@Transactional` rollback, hardcoded IDs colliding with seed data) and a
+disconnected mock in `PaymentServiceImplTest` (the code under test created
+its own `OkHttpClient`/`RestTemplate` internally, so the test's mocks were
+never actually wired in) have been fixed -- see git history for details.
 
 ## Branching
 

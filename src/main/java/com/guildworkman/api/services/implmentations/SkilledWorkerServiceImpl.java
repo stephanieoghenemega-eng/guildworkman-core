@@ -36,16 +36,18 @@ public class SkilledWorkerServiceImpl implements SkilledWorkerService {
     private final AppointmentService appointmentService;
     private final SkillRepository skillRepository;
     private final AddressRepository addressRepository;
+    private final PasswordEncoder passwordEncoder;
 
     @Autowired
     @Lazy
-    public SkilledWorkerServiceImpl(SkillService skillService, SkilledWorkerRepository skilledWorkerRepository, AddressServiceImpl addressService, AppointmentService appointmentService, SkillRepository skillRepository, AddressRepository addressRepository) {
+    public SkilledWorkerServiceImpl(SkillService skillService, SkilledWorkerRepository skilledWorkerRepository, AddressServiceImpl addressService, AppointmentService appointmentService, SkillRepository skillRepository, AddressRepository addressRepository, PasswordEncoder passwordEncoder) {
         this.skillService = skillService;
         this.skilledWorkerRepository = skilledWorkerRepository;
         this.addressService = addressService;
         this.appointmentService = appointmentService;
         this.skillRepository = skillRepository;
         this.addressRepository = addressRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @Override
@@ -61,7 +63,7 @@ public class SkilledWorkerServiceImpl implements SkilledWorkerService {
         SkilledWorker skilledWorker = new SkilledWorker();
         skilledWorker.setFullName(registrationRequest.getFullName());
         skilledWorker.setEmail(registrationRequest.getEmail());
-        skilledWorker.setPassword(registrationRequest.getPassword());
+        skilledWorker.setPassword(passwordEncoder.encode(registrationRequest.getPassword()));
         skilledWorker = skilledWorkerRepository.save(skilledWorker);
         return getSkilledWorkerRegistrationResponse(skilledWorker);
     }
@@ -125,7 +127,7 @@ public class SkilledWorkerServiceImpl implements SkilledWorkerService {
         Optional<SkilledWorker> foundSkilledWorker = skilledWorkerRepository.findByEmail(email);
         if (foundSkilledWorker.isPresent()){
             SkilledWorker skilledWorker = foundSkilledWorker.get();
-            if (skilledWorker.getPassword().equals(password)) {
+            if (passwordEncoder.matches(password, skilledWorker.getPassword())) {
                 return loginResponseMapper(skilledWorker);
             } else {
                 throw new GuildWorkmanException("Invalid username or password");
@@ -157,7 +159,7 @@ public class SkilledWorkerServiceImpl implements SkilledWorkerService {
         found.setEmail(request.getEmail());
         found.setUsername(request.getUsername());
         found.setPhoneNumber(request.getPhoneNumber());
-        found.setPassword(request.getPassword());
+        found.setPassword(passwordEncoder.encode(request.getPassword()));
         Address address = new Address();
         address.setHouseNumber(request.getHouseNumber());
         address.setStreet(request.getStreet());

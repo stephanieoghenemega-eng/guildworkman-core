@@ -10,15 +10,18 @@ import com.guildworkman.api.data.repository.ConsultationRepository;
 import com.guildworkman.api.data.repository.SkilledWorkerRepository;
 import com.guildworkman.api.dto.responses.ConsultationResponse;
 import com.guildworkman.api.services.ServiceUtils.ConsultationService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
+@Transactional
 public class ConsultationServiceTest {
 
     @Autowired
@@ -36,14 +39,26 @@ public class ConsultationServiceTest {
     @Autowired
     private SkilledWorkerRepository skilledWorkerRepository;
 
+    private Client client;
+    private SkilledWorker skilledWorker;
+
+    @BeforeEach
+    void setUp() {
+        Client newClient = new Client();
+        newClient.setFullName("Consultation Test Client");
+        newClient.setEmail("consultation.client@example.com");
+        newClient.setPassword("password1");
+        client = clientRepository.save(newClient);
+
+        SkilledWorker newWorker = new SkilledWorker();
+        newWorker.setFullName("Consultation Test Worker");
+        newWorker.setEmail("consultation.worker@example.com");
+        newWorker.setPassword("password1");
+        skilledWorker = skilledWorkerRepository.save(newWorker);
+    }
+
     @Test
     void testBookConsultation() {
-        Client client = clientRepository.findById(1L)
-                .orElseThrow(() -> new IllegalArgumentException("Client not found with id: 1L"));
-
-        SkilledWorker skilledWorker = skilledWorkerRepository.findById(1L)
-                .orElseThrow(() -> new IllegalArgumentException("SkilledWorker not found with id: 1L"));
-
         ConsultationResponse bookedConsultation = consultationService.bookConsultation(
                 client.getId(),
                 skilledWorker.getId(),
