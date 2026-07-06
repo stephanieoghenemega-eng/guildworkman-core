@@ -101,12 +101,11 @@ import com.guildworkman.api.payment.responses.PaymentResponse;
 import com.guildworkman.api.payment.responses.ResponseBodyDetails;
 import com.guildworkman.api.services.paystack.PaymentServiceImpl;
 import okhttp3.*;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
 
@@ -115,7 +114,7 @@ import java.math.BigDecimal;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-@SpringBootTest
+@ExtendWith(MockitoExtension.class)
 public class PaymentServiceImplTest {
 
     @Mock
@@ -124,13 +123,11 @@ public class PaymentServiceImplTest {
     @Mock
     private RestTemplate restTemplate;
 
+    @Mock
+    private OkHttpClient client;
+
     @InjectMocks
     private PaymentServiceImpl paymentService;
-
-    @BeforeEach
-    public void setUp() {
-        MockitoAnnotations.openMocks(this);
-    }
 
     @Test
     public void testMakePayment() {
@@ -156,15 +153,15 @@ public class PaymentServiceImplTest {
         paymentRequest.setAmount(BigDecimal.valueOf(1000));
         paymentRequest.setEmail("test@example.com");
 
-        OkHttpClient client = mock(OkHttpClient.class);
         Response response = mock(Response.class);
+        Call call = mock(Call.class);
         when(response.isSuccessful()).thenReturn(true);
         when(response.body()).thenReturn(ResponseBody.create(
                 "{\"status\": true, \"message\": \"Success\", \"data\": {\"authorization_url\": \"url\", \"access_code\": \"code\", \"reference\": \"ref\"}}",
                 MediaType.parse("application/json")
         ));
-        when(client.newCall(any(Request.class))).thenReturn(mock(Call.class));
-        when(client.newCall(any(Request.class)).execute()).thenReturn(response);
+        when(call.execute()).thenReturn(response);
+        when(client.newCall(any(Request.class))).thenReturn(call);
 
         when(appConfig.getPayStackVerifyPaymentUrl()).thenReturn("https://api.paystack.co/verify/");
         when(appConfig.getPayStackSecretKey()).thenReturn("secretKey");
@@ -180,15 +177,15 @@ public class PaymentServiceImplTest {
     public void testVerifyPayment() throws Exception {
         String reference = "test_reference";
 
-        OkHttpClient client = mock(OkHttpClient.class);
         Response response = mock(Response.class);
+        Call call = mock(Call.class);
         when(response.isSuccessful()).thenReturn(true);
         when(response.body()).thenReturn(ResponseBody.create(
                 "{\"status\": true, \"message\": \"Verified\", \"data\": {}}",
                 MediaType.parse("application/json")
         ));
-        when(client.newCall(any(Request.class))).thenReturn(mock(Call.class));
-        when(client.newCall(any(Request.class)).execute()).thenReturn(response);
+        when(call.execute()).thenReturn(response);
+        when(client.newCall(any(Request.class))).thenReturn(call);
 
         when(appConfig.getPayStackVerifyPaymentUrl()).thenReturn("https://api.paystack.co/verify/");
         when(appConfig.getPayStackSecretKey()).thenReturn("secretKey");

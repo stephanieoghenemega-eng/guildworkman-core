@@ -19,12 +19,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.jdbc.Sql;
+import org.springframework.transaction.annotation.Transactional;
 
 import static com.guildworkman.api.data.constants.AppointmentStatus.CANCELLED;
 import static org.assertj.core.api.Assertions.assertThat;
 
 
 @SpringBootTest
+@Transactional
 //@Sql(scripts = "/db/data.sql")
 public class ClientServiceTest {
     @Autowired
@@ -43,10 +45,11 @@ public class ClientServiceTest {
 
     @Test
     public void registerClient() {
+        long before = clientService.getNumberOfUsers();
         RegistrationRequest registerClientRequest = getRegistrationRequest();
         ClientRegistrationResponse response = clientService.registerClient(registerClientRequest);
         assertThat(response).isNotNull();
-        assertThat(clientService.getNumberOfUsers()).isEqualTo(1L);
+        assertThat(clientService.getNumberOfUsers()).isEqualTo(before + 1);
 
     }
 
@@ -60,11 +63,12 @@ public class ClientServiceTest {
 
     @Test
     public void updateUserProfileTest() {
+        long before = clientService.getNumberOfUsers();
         UpdateClientRequest updateRequest = new UpdateClientRequest();
         RegistrationRequest registerClientRequest = getRegistrationRequest();
         ClientRegistrationResponse response = clientService.registerClient(registerClientRequest);
         assertThat(response).isNotNull();
-        assertThat(clientService.getNumberOfUsers()).isEqualTo(1L);
+        assertThat(clientService.getNumberOfUsers()).isEqualTo(before + 1);
 
         updateRequest.setClientId(response.getClientId());
         updateRequest.setUsername("Jdoe");
@@ -74,7 +78,7 @@ public class ClientServiceTest {
         updateRequest.setArea("Yaba");
         UpdateClientResponse updateResponse = clientService.updateClientProfile(updateRequest);
         assertThat(updateResponse).isNotNull();
-        assertThat(clientService.getNumberOfUsers()).isEqualTo(1L);
+        assertThat(clientService.getNumberOfUsers()).isEqualTo(before + 1);
         assertThat(updateResponse.getClientId()).isEqualTo(response.getClientId());
 
     }

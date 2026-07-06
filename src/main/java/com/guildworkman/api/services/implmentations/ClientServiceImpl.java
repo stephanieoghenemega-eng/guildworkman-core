@@ -34,6 +34,7 @@ public class ClientServiceImpl implements ClientService {
     private final SkilledWorkerService skilledWorkerService;
     private final ClientRepository clientRepository;
     private final AddressRepository addressRepository;
+    private final PasswordEncoder passwordEncoder;
     private AppointmentService appointmentService;
 
     @Autowired
@@ -50,7 +51,7 @@ public class ClientServiceImpl implements ClientService {
         Client user = new Client();
         user.setFullName(request.getFullName());
         user.setEmail(request.getEmail());
-        user.setPassword(request.getPassword());
+        user.setPassword(passwordEncoder.encode(request.getPassword()));
         user = clientRepository.save(user);
 
         ClientRegistrationResponse response = new ClientRegistrationResponse();
@@ -189,7 +190,7 @@ public class ClientServiceImpl implements ClientService {
 
         if (foundClient.isPresent()){
             Client client = foundClient.get();
-            if (client.getPassword().equals(password)) {
+            if (passwordEncoder.matches(password, client.getPassword())) {
                 return loginResponseMapper(client);
             } else {
                 throw new GuildWorkmanException("Invalid email or password");
@@ -221,7 +222,7 @@ public class ClientServiceImpl implements ClientService {
         Client foundClient = clientRepository.findById(updateRequest.getClientId())
                 .orElseThrow(()-> new UserNotFoundException("User not found"));
 
-        foundClient.setPassword(updateRequest.getPassword());
+        foundClient.setPassword(passwordEncoder.encode(updateRequest.getPassword()));
         foundClient.setUsername(updateRequest.getUsername());
         foundClient.setPhoneNumber(updateRequest.getPhoneNumber());
         Address address = new Address();

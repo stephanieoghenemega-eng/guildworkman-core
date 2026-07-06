@@ -42,9 +42,10 @@ public class SkilledWorkerServiceTest {
 
     @Test
     public void SkilledWorkerRegistrationTest() {
+        long before = skilledWorkerService.getNumberOfUsers();
         RegistrationRequest registrationRequest = getRegistrationRequest();
         SkilledWorkerRegistrationResponse response = skilledWorkerService.registerSkilledWorker(registrationRequest);
-        assertThat(skilledWorkerService.getNumberOfUsers()).isEqualTo(1L);
+        assertThat(skilledWorkerService.getNumberOfUsers()).isEqualTo(before + 1);
         assertThat(response).isNotNull();
     }
 
