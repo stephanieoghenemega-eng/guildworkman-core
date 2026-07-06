@@ -88,7 +88,7 @@ impl EscrowContract {
 
         // Pull funds from the client into the contract's own balance.
         let token_client = token::Client::new(&env, &token);
-        token_client.transfer(&client, &env.current_contract_address(), &amount);
+        token_client.transfer(&client, env.current_contract_address(), &amount);
 
         let appointment = Appointment {
             client,
