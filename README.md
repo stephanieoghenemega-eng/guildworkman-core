@@ -2,9 +2,9 @@
 
 Spring Boot backend for **GuildWorkman**, a marketplace that connects clients
 with skilled workers (electricians, plumbers, barbers, etc.) for booked
-appointments and consultations, with in-app payments and reviews. GuildWorkman
-is a rebrand of the original Sabi-Connect project, extended with Soroban smart
-contracts (see [`guildworkman-contracts`](https://github.com/workman-labs/guildworkman-contracts))
+appointments and consultations, with in-app payments and reviews. Extended
+with Soroban smart contracts (see
+[`guildworkman-contracts`](https://github.com/workman-labs/guildworkman-contracts))
 for on-chain escrow, reputation, and loyalty rewards.
 
 ## Tech stack
