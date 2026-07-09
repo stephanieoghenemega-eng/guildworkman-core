@@ -1,5 +1,7 @@
 # guildworkman-contracts
 
+![CI](https://github.com/workman-labs/guildworkman-contracts/actions/workflows/ci.yml/badge.svg)
+
 Soroban (Stellar) smart contracts for GuildWorkman, the skilled-worker booking
 marketplace. This workspace has three independent contracts:
 
@@ -14,6 +16,29 @@ These mirror the domain already implemented server-side in
 (`AppointmentService`, `ReviewService`, `TransactionService`), moving the
 trust-sensitive parts of that flow — holding money, recording reviews,
 issuing rewards — on-chain.
+
+## Table of contents
+
+- [Project ecosystem](#project-ecosystem)
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Build](#build)
+- [Test](#test)
+- [Deploy (testnet example)](#deploy-testnet-example)
+- [Contract interfaces](#contract-interfaces)
+- [Security considerations / known limitations](#security-considerations--known-limitations)
+- [Notes / follow-ups](#notes--follow-ups)
+- [License](#license)
+
+## Project ecosystem
+
+GuildWorkman is split across three repositories:
+
+| Repo | Role |
+|---|---|
+| **`guildworkman-contracts`** (this repo) | Soroban smart contracts for on-chain escrow, reputation, and loyalty rewards. |
+| [`guildworkman-web`](https://github.com/workman-labs/guildworkman-web) | Next.js frontend. Already has a real Freighter wallet-connect button and a "Trust, backed by smart contracts" section describing these contracts — but makes no contract calls yet. |
+| [`guildworkman-api`](https://github.com/workman-labs/guildworkman-api) | Spring Boot backend. Implements the same domain server-side today (`AppointmentService`, `ReviewService`, `TransactionService`) and is the intended caller of these contracts once integrated — see [Suggested backend integration](#suggested-backend-integration-not-yet-wired-in) below. |
 
 ## Architecture
 
