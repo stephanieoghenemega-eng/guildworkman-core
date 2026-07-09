@@ -1,21 +1,50 @@
 # GuildWorkman API
 
+![Test](https://github.com/workman-labs/guildworkman-api/actions/workflows/test.yml/badge.svg)
+
 Spring Boot backend for **GuildWorkman**, a marketplace that connects clients
-with skilled workers (electricians, plumbers, barbers, etc.) for booked
-appointments and consultations, with in-app payments and reviews. Extended
-with Soroban smart contracts (see
-[`guildworkman-contracts`](https://github.com/workman-labs/guildworkman-contracts))
-for on-chain escrow, reputation, and loyalty rewards.
+with skilled workers (electricians, plumbers, barbers, beauticians,
+carpenters, fashion designers, photographers, and more) for booked
+appointments and consultations, with in-app payments and reviews.
+
+## Table of contents
+
+- [Project ecosystem](#project-ecosystem)
+- [Tech stack](#tech-stack)
+- [Architecture](#architecture)
+- [Domain model](#domain-model)
+- [Features](#features)
+- [Not yet wired up](#not-yet-wired-up)
+- [Prerequisites](#prerequisites)
+- [Configuration](#configuration)
+- [Running locally](#running-locally)
+- [Running with Docker](#running-with-docker)
+- [API reference](#api-reference)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Branching](#branching)
+- [Contributing](#contributing)
+
+## Project ecosystem
+
+GuildWorkman is split across three repositories:
+
+| Repo | Role |
+|---|---|
+| **`guildworkman-api`** (this repo) | Spring Boot backend — auth, booking, payments, email, and the Postgres-backed domain model. |
+| [`guildworkman-web`](https://github.com/workman-labs/guildworkman-web) | Next.js frontend that talks to this API over REST. |
+| [`guildworkman-contracts`](https://github.com/workman-labs/guildworkman-contracts) | Soroban (Stellar) smart contracts for on-chain escrow, reputation, and loyalty rewards — designed to be called *from* this backend, but not yet integrated (see [Not yet wired up](#not-yet-wired-up)). |
 
 ## Tech stack
 
 - **Java 17**, **Spring Boot 3.3.2**
-- **Spring Web**, **Spring Data JPA**, **Spring Security**
+- **Spring Web**, **Spring Data JPA**, **Spring Security**, **Lombok**
 - **PostgreSQL** (`org.postgresql:postgresql`)
 - **Auth0 java-jwt** — JWT issuance/verification
 - **ModelMapper** — DTO ↔ entity mapping
 - **Cloudinary** (`cloudinary-http44`) — media/image uploads
 - **OkHttp** + **Gson** — outbound HTTP calls (e.g. Paystack)
+- **json-patch** — partial-update support
 - Build: **Maven** (wrapper included), packaged as a runnable jar, containerized via Docker
 
 ## Architecture
@@ -24,22 +53,45 @@ Single Spring Boot module, package root `com.guildworkman.api`, in a
 conventional layered structure:
 
 ```
-controllers/   REST endpoints (@RestController)
+controllers/       REST endpoints (@RestController)
 services/
   ServiceUtils/        service interfaces
-  implmentations/       interface implementations
-  paystack/             Paystack payment integration
-data/models/    JPA entities
-dto/requests/   inbound request payloads
-dto/responses/  outbound response payloads
-exceptions/     custom exceptions + GlobalExceptionHandler
-config/         Spring config (security, mail, cloud, mapper, app)
-utils/          JWT + validation helpers
+  implmentations/      interface implementations
+  paystack/            Paystack payment integration
+data/models/       JPA entities
+dto/requests/      inbound request payloads
+dto/responses/     outbound response payloads
+handler/           GlobalExceptionHandler
+exceptions/        custom exceptions
+config/            Spring config (security, mail, cloud, mapper, app)
+utils/             JWT + validation helpers
 ```
 
-Core domain entities: `Client`, `SkilledWorker`, `Skill`, `Address`,
-`Appointment`, `Consultation`, `ConsultationAvailability`, `Review`,
-`Transaction` / `TransactionHistory`, `Notification`, `Admin`.
+Requests flow `Controller → Service interface (ServiceUtils) → ServiceImpl
+(implmentations) → JPA repository`, with DTOs converted to/from entities via
+ModelMapper (`config/MapperConfig.java`) and every response wrapped in a
+common `ApiResponse { data, success }` envelope. `GlobalExceptionHandler`
+translates the custom exceptions in `exceptions/` (e.g.
+`UserNotFoundException`, `AppointmentNotFoundException`,
+`InvalidPasswordException`) into consistent HTTP error responses.
+
+## Domain model
+
+Core JPA entities in `data/models/`:
+
+| Entity | Relationships | Purpose |
+|---|---|---|
+| `Client` | 1:N `Appointment`, 1:1 `Address` | A user who books workers |
+| `SkilledWorker` | 1:N `Skill`, 1:1 `Address` | A tradesperson who gets booked |
+| `Skill` | N:1 `SkilledWorker` | A trade/category a worker offers |
+| `Address` | — | Shared geo/address data for clients and workers (backs the `/nearby` lookup) |
+| `Appointment` | N:1 `Client`, N:1 `SkilledWorker` | A booked job |
+| `Consultation` | N:1 `Client`, N:1 `SkilledWorker`, 1:1 `ConsultationAvailability` | A pre-booking consultation between client and worker |
+| `ConsultationAvailability` | 1:1 `Consultation` | Scheduled availability windows for a consultation |
+| `Review` | N:1 (worker/appointment) | A client's rating/feedback on a completed job |
+| `Transaction` / `TransactionHistory` | M:N | Payment records (Paystack) |
+| `Notification` | — | In-app/email notification records |
+| `Admin` | — | Admin-role user |
 
 ## Features
 
@@ -51,15 +103,30 @@ Core domain entities: `Client`, `SkilledWorker`, `Skill`, `Address`,
 - Transactional email sending (mail service, provider-agnostic API key + URL config)
 - Reviews and worker ratings (`ReviewServiceImpl`)
 - Admin operations (`AdminServiceImpl`)
-- Global exception handling with typed exceptions (`UserNotFoundException`,
-  `AppointmentNotFoundException`, `InvalidEmailFoundException`,
-  `InvalidPasswordException`, `GuildWorkmanException`)
+- Global exception handling with typed exceptions
 
-Two controllers exist in the tree but are currently **commented out and inactive**:
-`PaymentController` (`/payment`) and `mapController/MapController` (`/showMap`).
-Payment logic itself is implemented in the service layer
-(`services/paystack/PaymentServiceImpl`) and can be re-exposed by uncommenting
-`PaymentController` once its request/response wiring is finalized.
+## Not yet wired up
+
+A few service-layer pieces exist but currently have **no REST endpoint**
+exposing them — the business logic is implemented and (where applicable)
+tested, but not yet reachable over HTTP:
+
+- **`PaymentController`** (`/payment`) and **`MapController`**
+  (`/showMap`) exist in the tree but are commented out and inactive. Payment
+  logic lives in `services/paystack/PaymentServiceImpl` and can be
+  re-exposed by uncommenting `PaymentController` once its request/response
+  wiring is finalized.
+- **`AdminServiceImpl`** has no corresponding `AdminController` yet.
+- **Reviews** (`ReviewServiceImpl`, `PostReviewRequest`/`EditReviewRequest`)
+  aren't exposed on `ClientController` or `SkilledWorkerController` today,
+  even though the service and DTOs are fully implemented and tested.
+
+This also means **none of `guildworkman-contracts`'s Soroban contracts are
+called from here yet** — wiring `escrow.create_appointment`,
+`reputation.submit_review`, and `loyalty-token.mint` into the appointment
+and review flows requires a Soroban RPC client and per-role Stellar keypair
+handling that doesn't exist in this codebase today. See that repo's README
+for the intended integration flow.
 
 ## Prerequisites
 
@@ -162,6 +229,9 @@ All endpoints are prefixed `/api/v1/...`. Responses are wrapped in a common
 | POST | `/consult?clientId=&workerId=&details=` | Book a consultation |
 | POST | `/{consultationId}/availability?clientAvailability=&workerAvailability=` | Schedule consultation availability |
 
+CORS: allows all origins (`*`) — broader than the other two controllers,
+worth tightening before production hardening.
+
 ### `SkilledWorkerController` — `/api/v1/skilledWorker`
 
 | Method | Path | Purpose |
@@ -174,14 +244,15 @@ All endpoints are prefixed `/api/v1/...`. Responses are wrapped in a common
 | PUT | `/updateSkilledWorkerProfile` | Update worker profile |
 | GET | `/nearby?lat=&lon=&radius=` | Find workers near a location (`radius` defaults to 10) |
 
+CORS: restricted to `https://guildworkman.vercel.app/`.
+
 ### `MailController` — `/api/v1/mail`
 
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/sendMail` | Send a transactional email |
 
-CORS is restricted to `https://guildworkman.vercel.app/` on `MailController` and
-`SkilledWorkerController`; `ClientController` currently allows all origins (`*`).
+CORS: restricted to `https://guildworkman.vercel.app/`.
 
 ## Testing
 
@@ -198,19 +269,23 @@ to `development` (`.github/workflows/test.yml`).
 
 Existing tests cover `MailServiceTest`, `ClientServiceTest`,
 `SkilledWorkerServiceTest`, `AppointmentServiceTest`, `ReviewServiceTest`, and
-`SkillServiceTest`.
+`SkillServiceTest`. All 14 tests pass as of this writing.
 
-All 14 tests pass as of this writing. Test-isolation issues (missing
-`@Transactional` rollback, hardcoded IDs colliding with seed data) and a
-disconnected mock in `PaymentServiceImplTest` (the code under test created
-its own `OkHttpClient`/`RestTemplate` internally, so the test's mocks were
-never actually wired in) have been fixed -- see git history for details.
+## Deployment
+
+`.github/workflows/build.yml` builds and pushes a Docker image to Docker Hub
+(`meshackyaro/guildworkman-api:latest`) on every push to `development`, then
+deploys it via `docker pull` + `docker run` on the target host. That file
+also contains several earlier, now-commented-out iterations of the same
+pipeline (SSH-based deploy, alternate Maven caching) — only the final,
+uncommented job at the bottom of the file is live.
 
 ## Branching
 
-Default branch is **`development`**. Other active branches: `appointment`,
-`fitzgerald`, `login`, `main`, `security`, `transaction` — these generally
-track feature/area work and get merged back into `development` via PR.
+Default branch is **`development`**. Feature/area work happens on
+short-lived branches and merges back into `development` via PR — check
+`git branch -r` for whatever's currently active rather than relying on a
+hardcoded list here, since branches get created and deleted regularly.
 
 ## Contributing
 
