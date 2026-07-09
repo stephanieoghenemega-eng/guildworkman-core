@@ -1,8 +1,7 @@
 # guildworkman-contracts
 
-Soroban (Stellar) smart contracts for GuildWorkman (a rebrand of the original
-Sabi-Connect project), the skilled-worker booking marketplace. This workspace
-has three independent contracts:
+Soroban (Stellar) smart contracts for GuildWorkman, the skilled-worker booking
+marketplace. This workspace has three independent contracts:
 
 | Contract | Path | Purpose |
 |---|---|---|

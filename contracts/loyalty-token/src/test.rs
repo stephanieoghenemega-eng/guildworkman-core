@@ -18,8 +18,8 @@ fn setup() -> (Env, LoyaltyTokenClient<'static>, Address, Address, Address) {
         &admin,
         &minter,
         &2,
-        &String::from_str(&env, "Sabi Points"),
-        &String::from_str(&env, "SABI"),
+        &String::from_str(&env, "GuildWorkman Points"),
+        &String::from_str(&env, "GWP"),
     );
 
     (env, contract, admin, minter, user)
