@@ -5,14 +5,21 @@ preserving both commit histories. **Do it on a fresh clone + feature branch;
 nothing is destructive; the contracts repo is archived (never deleted) only
 after the merge is verified.**
 
+> **Final layout.** For a symmetric two-package monorepo, the Spring API lives
+> under **`backend-api/`** and the contracts under **`soroban-contracts/`**.
+> Step 1 below grafts the contracts at `soroban/` via subtree; they were then
+> renamed to `soroban-contracts/` and the backend module relocated into
+> `backend-api/` (a plain `git mv`, tracked as renames — history preserved).
+> Root keeps `.github/`, `MIGRATION.md`, and the monorepo `README.md`.
+
 ## Decisions (confirmed)
 
 | Decision | Choice |
 |---|---|
 | Base repo | `guildworkman-api` (keeps its history, 6 PRs, issues) |
 | Absorbed repo | `guildworkman-contracts` (git@github.com:workman-labs/guildworkman-contracts.git, default branch `main`) |
-| Mount point | **`soroban/`** |
-| Technique | **`git subtree`** (preserves original commit SHAs) |
+| Layout | **`backend-api/`** (Spring API) + **`soroban-contracts/`** (Soroban) |
+| Technique | **`git subtree`** (preserves original commit SHAs) + `git mv` for the symmetric relocation |
 | Target branch | `development` (api's default) |
 | Contracts repo after | **Archive** (read-only) — not delete |
 
