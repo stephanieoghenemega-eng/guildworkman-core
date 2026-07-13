@@ -1,9 +1,19 @@
-name: CI
+name: Soroban CI
 
 on:
   push:
-    branches: [main]
+    branches: [development]
+    paths:
+      - "soroban/**"
+      - ".github/workflows/soroban-ci.yml"
   pull_request:
+    paths:
+      - "soroban/**"
+      - ".github/workflows/soroban-ci.yml"
+
+defaults:
+  run:
+    working-directory: soroban
 
 jobs:
   test:
@@ -14,5 +24,7 @@ jobs:
         with:
           targets: wasm32v1-none
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: soroban
       - run: cargo test --workspace
       - run: cargo build --workspace --release --target wasm32v1-none

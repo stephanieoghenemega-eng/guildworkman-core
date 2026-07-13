@@ -7,6 +7,15 @@ with skilled workers (electricians, plumbers, barbers, beauticians,
 carpenters, fashion designers, photographers, and more) for booked
 appointments and consultations, with in-app payments and reviews.
 
+> **Monorepo layout.** This repository now also houses the Soroban smart
+> contracts (previously `guildworkman-contracts`):
+> - `src/`, `pom.xml` — the Spring Boot API (this document).
+> - `soroban/` — the Rust/Soroban on-chain escrow & reputation contracts
+>   (see `soroban/README.md`).
+>
+> CI is path-filtered: backend changes run the Maven workflows, `soroban/**`
+> changes run `soroban-ci`. See `MIGRATION.md` for how the merge was done.
+
 ## Table of contents
 
 - [Project ecosystem](#project-ecosystem)

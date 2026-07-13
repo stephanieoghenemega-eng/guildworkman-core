@@ -3,7 +3,25 @@ name: Test
 on:
   push:
     branches: [development]
+    paths:
+      - "src/**"
+      - "pom.xml"
+      - ".mvn/**"
+      - "mvnw"
+      - "mvnw.cmd"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".github/workflows/test.yml"
   pull_request:
+    paths:
+      - "src/**"
+      - "pom.xml"
+      - ".mvn/**"
+      - "mvnw"
+      - "mvnw.cmd"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".github/workflows/test.yml"
 
 jobs:
   test:

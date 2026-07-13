@@ -172,6 +172,15 @@ on:
   push:
     branches:
       - development
+    paths:
+      - "src/**"
+      - "pom.xml"
+      - ".mvn/**"
+      - "mvnw"
+      - "mvnw.cmd"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".github/workflows/build.yml"
 
 jobs:
   build:
