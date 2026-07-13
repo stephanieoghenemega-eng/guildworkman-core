@@ -3,7 +3,17 @@ name: Test
 on:
   push:
     branches: [development]
+    paths:
+      - "backend-api/**"
+      - ".github/workflows/test.yml"
   pull_request:
+    paths:
+      - "backend-api/**"
+      - ".github/workflows/test.yml"
+
+defaults:
+  run:
+    working-directory: backend-api
 
 jobs:
   test:

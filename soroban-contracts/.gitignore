@@ -1,0 +1,7 @@
+/target
+**/*.rs.bk
+**/test_snapshots/
+.soroban
+*.wasm
+Cargo.lock.bak
+.DS_Store

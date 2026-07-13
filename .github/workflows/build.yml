@@ -172,6 +172,9 @@ on:
   push:
     branches:
       - development
+    paths:
+      - "backend-api/**"
+      - ".github/workflows/build.yml"
 
 jobs:
   build:
@@ -203,7 +206,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker image
-        run: docker build -t meshackyaro/guildworkman-api:latest .
+        run: docker build -t meshackyaro/guildworkman-api:latest backend-api
 
       - name: Push Docker image to Docker Hub
         run: docker push meshackyaro/guildworkman-api:latest

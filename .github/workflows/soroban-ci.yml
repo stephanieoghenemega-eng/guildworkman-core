@@ -1,0 +1,30 @@
+name: Soroban CI
+
+on:
+  push:
+    branches: [development]
+    paths:
+      - "soroban-contracts/**"
+      - ".github/workflows/soroban-ci.yml"
+  pull_request:
+    paths:
+      - "soroban-contracts/**"
+      - ".github/workflows/soroban-ci.yml"
+
+defaults:
+  run:
+    working-directory: soroban-contracts
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: soroban-contracts
+      - run: cargo test --workspace
+      - run: cargo build --workspace --release --target wasm32v1-none
