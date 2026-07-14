@@ -12,6 +12,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 import static java.time.LocalDateTime.now;
@@ -46,7 +47,10 @@ public class SkilledWorker {
     private Category category;
     @OneToMany(mappedBy = "skilledWorker",
             cascade = CascadeType.ALL,orphanRemoval = true,fetch = FetchType.EAGER)
-    private List<Appointment> appointment;
+    // Initialised for the same reason as Client.appointment: a freshly-persisted
+    // SkilledWorker whose collection Hibernate hasn't hydrated is otherwise a null
+    // list waiting to NPE on the first add/remove.
+    private List<Appointment> appointment = new ArrayList<>();
 
     @PrePersist
     private void setTimeCreated(){

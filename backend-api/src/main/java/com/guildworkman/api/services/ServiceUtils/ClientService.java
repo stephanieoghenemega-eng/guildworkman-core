@@ -13,11 +13,14 @@ public interface ClientService {
 
     BookAppointmentResponse bookAppointment(BookAppointmentRequest bookAppointmentRequest);
 
-    CancelAppointmentResponse cancelAppointment(Long id, CancelAppointmentRequest cancelAppointmentRequest);
+    // The appointment id is all these need. They previously also took a request
+    // DTO carrying a *client* id, which no caller sent (and which the cancel
+    // endpoint didn't even bind as a body) — so every call failed on a null id.
+    CancelAppointmentResponse cancelAppointment(Long appointmentId);
 
-    UpdateAppointmentResponse updateAppointment(Long Id,UpdateAppointmentRequest request);
+    UpdateAppointmentResponse updateAppointment(Long appointmentId, UpdateAppointmentRequest request);
 
-    DeleteAppointmentResponse deleteAppointment(Long id, DeleteAppointmentRequest request);
+    DeleteAppointmentResponse deleteAppointment(Long appointmentId);
 
     List<ViewAllAppointmentsResponse> viewAllAppointment(Long id);
 

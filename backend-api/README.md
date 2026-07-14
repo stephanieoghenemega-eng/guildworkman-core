@@ -229,9 +229,9 @@ All endpoints are prefixed `/api/v1/...`. Responses are wrapped in a common
 | POST | `/registerClient` | Register a new client |
 | POST | `/login` | Client login |
 | POST | `/bookAppointment` | Book an appointment. Body: `clientId`, `category`, `scheduleTime`, plus optional `skilledWorkerId` (which tradesperson) and `amount` (agreed price) |
-| PUT | `/updateAppointment?appointmentId=` | Update an existing appointment |
-| PUT | `/cancelAppointment?appointmentId=` | Cancel an appointment |
-| DELETE | `/deleteAppointment?appointmentId=` | Delete an appointment |
+| PUT | `/updateAppointment?appointmentId=` | Set an appointment's status — body `{ "status": "ACCEPTED" }` (also accepts `amount`, `startTime`) |
+| PUT | `/cancelAppointment?appointmentId=` | Cancel an appointment — no body. Leaves the record in place with status `CANCELLED` |
+| DELETE | `/deleteAppointment?appointmentId=` | Delete an appointment outright — no body |
 | GET | `/viewAllAppointment?clientId=` | **List** of a client's appointments (`id`, `status`, `category`, `scheduleTime`, `amount`, `worker`) |
 | PUT | `/updateClientProfile` | Update client profile |
 | POST | `/consult?clientId=&workerId=&details=` | Book a consultation |

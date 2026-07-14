@@ -43,24 +43,30 @@ public class ClientController {
                .body(new ApiResponse
                         (clientService.registerClient(registrationRequest),true));
     }
+    // These change existing state, so they return 200 OK, not 201 CREATED, and
+    // take only the appointment id. The cancel endpoint used to declare a
+    // CancelAppointmentRequest with no @RequestBody, so Spring bound it from the
+    // query string — meaning a cancel silently required an extra, undocumented
+    // `id` param (the *client* id) and failed with "The given id must not be
+    // null" for every caller that sent just appointmentId.
     @PutMapping("/cancelAppointment")
-    public ResponseEntity<?> cancelAppointment(@RequestParam Long appointmentId, CancelAppointmentRequest request){
-        return ResponseEntity.status(CREATED)
+    public ResponseEntity<?> cancelAppointment(@RequestParam Long appointmentId){
+        return ResponseEntity.status(HttpStatus.OK)
                .body(new ApiResponse
-                        (clientService.cancelAppointment(appointmentId,request),true));
+                        (clientService.cancelAppointment(appointmentId),true));
     }
 
     @PutMapping("/updateAppointment")
     public ResponseEntity<?> updateAppointment(@RequestParam Long appointmentId, @RequestBody UpdateAppointmentRequest request){
-        return ResponseEntity.status(CREATED)
+        return ResponseEntity.status(HttpStatus.OK)
                .body(new ApiResponse
                         (clientService.updateAppointment(appointmentId, request),true));
     }
     @DeleteMapping("/deleteAppointment")
-    public ResponseEntity<?> deleteAppointment(@RequestParam Long appointmentId,@RequestBody DeleteAppointmentRequest request){
-        return ResponseEntity.status(CREATED)
+    public ResponseEntity<?> deleteAppointment(@RequestParam Long appointmentId){
+        return ResponseEntity.status(HttpStatus.OK)
                .body(new ApiResponse
-                        (clientService.deleteAppointment(appointmentId,request),true));
+                        (clientService.deleteAppointment(appointmentId),true));
     }
 
     @GetMapping("/viewAllAppointment")

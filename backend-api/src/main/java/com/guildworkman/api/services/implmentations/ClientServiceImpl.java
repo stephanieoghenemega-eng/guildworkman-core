@@ -93,44 +93,68 @@ public class ClientServiceImpl implements ClientService {
 
     @Override
     @Transactional
-    public CancelAppointmentResponse cancelAppointment(Long id, CancelAppointmentRequest request){
-        Client client = clientRepository.findById(request.getId())
-                .orElseThrow(()->new UserNotFoundException("User not found"));
-        Optional<Appointment> appointment = Optional.ofNullable((appointmentService.findAppointmentById(id)
-                .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found"))));
-        appointmentService.cancelAppointment(appointment.get().getId());
-        client.getAppointment().remove(appointment.get());
-        clientRepository.save(client);
+    public CancelAppointmentResponse cancelAppointment(Long appointmentId){
+        Appointment appointment = appointmentService.findAppointmentById(appointmentId)
+                .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found"));
+
+        // Cancelling LEAVES the appointment in place with status CANCELLED.
+        // This used to also do client.getAppointment().remove(appointment), and
+        // because that relation is orphanRemoval = true, the row was DELETED —
+        // so the CANCELLED status was unreachable and the client lost all record
+        // of the job. Set the status; don't detach it from the client.
+        appointmentService.cancelAppointment(appointment.getId());
 
         CancelAppointmentResponse response = new CancelAppointmentResponse();
+        response.setAppointmentId(appointment.getId());
         response.setMessage("Appointment cancelled successfully");
         return response;
     }
 
     @Override
     @Transactional
-    public UpdateAppointmentResponse updateAppointment(Long Id,UpdateAppointmentRequest request) {
-        Client client = clientRepository.findById(request.getClientId())
-                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
-        Optional<Appointment> appointment = appointmentService.findAppointmentById(Id);
-        appointment.ifPresent(value -> client.getAppointment().add(value));
-
-        UpdateAppointmentResponse response = modelMapper.map(appointment,UpdateAppointmentResponse.class);
-        response.setMessage("Appointment updated successfully");
-        return response;
+    public UpdateAppointmentResponse updateAppointment(Long appointmentId, UpdateAppointmentRequest request) {
+        // Previously this looked up a client by request.getClientId() (which no
+        // caller sends), re-added the appointment to the client's collection, and
+        // never applied the requested status — accept/decline silently did nothing.
+        return appointmentService.updateAppointment(appointmentId, request);
     }
 
     @Override
     @Transactional
-    public DeleteAppointmentResponse deleteAppointment(Long id, DeleteAppointmentRequest request) {
-        Client client = clientRepository.findById(id)
-                .orElseThrow(()->new UserNotFoundException("User not found"));
-        var appointment = appointmentService.findAppointmentById(request.getId());
-        appointmentService.deleteAppointment(appointment.get().getId());
-        client.getAppointment().remove(appointment);
+    public DeleteAppointmentResponse deleteAppointment(Long appointmentId) {
+        Appointment appointment = appointmentService.findAppointmentById(appointmentId)
+                .orElseThrow(() -> new AppointmentNotFoundException("Appointment not found"));
+
+        // Detach the appointment from BOTH sides that own it before deleting.
+        //
+        // Client.appointment and SkilledWorker.appointment are each
+        // @OneToMany(cascade = ALL, orphanRemoval = true, fetch = EAGER). Both are
+        // loaded and managed here, so if either collection still holds this
+        // appointment at flush time, Hibernate cascades a PERSIST back over it and
+        // RESURRECTS the entity — the remove is cancelled and no DELETE is ever
+        // issued, while the caller still gets "deleted successfully".
+        //
+        // Matching on id, not object identity: Appointment has no equals/hashCode,
+        // so List.remove(entity) silently no-ops if the collection holds a
+        // different instance of the same row.
+        detachFromOwners(appointment, appointmentId);
+        appointmentService.deleteAppointment(appointment.getId());
+
         DeleteAppointmentResponse response = new DeleteAppointmentResponse();
-         response.setMessage("Appointment  deleted successfully");
-         return response;
+        response.setMessage("Appointment deleted successfully");
+        return response;
+    }
+
+    private void detachFromOwners(Appointment appointment, Long appointmentId) {
+        Client client = appointment.getClient();
+        if (client != null && client.getAppointment() != null) {
+            client.getAppointment().removeIf(a -> appointmentId.equals(a.getId()));
+            clientRepository.save(client);
+        }
+        SkilledWorker worker = appointment.getSkilledWorker();
+        if (worker != null && worker.getAppointment() != null) {
+            worker.getAppointment().removeIf(a -> appointmentId.equals(a.getId()));
+        }
     }
     @Override
     public List<ViewAllAppointmentsResponse> viewAllAppointment(Long id) {

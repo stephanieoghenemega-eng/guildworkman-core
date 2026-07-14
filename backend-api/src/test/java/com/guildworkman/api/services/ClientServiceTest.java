@@ -1,5 +1,7 @@
 package com.guildworkman.api.services;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import com.guildworkman.api.data.constants.AppointmentStatus;
 import com.guildworkman.api.data.constants.Category;
 import com.guildworkman.api.data.models.Client;
@@ -7,6 +9,7 @@ import com.guildworkman.api.data.repository.AddressRepository;
 import com.guildworkman.api.data.repository.AppointmentRepository;
 import com.guildworkman.api.dto.requests.BookAppointmentRequest;
 import com.guildworkman.api.dto.requests.RegistrationRequest;
+import com.guildworkman.api.dto.requests.UpdateAppointmentRequest;
 import com.guildworkman.api.dto.requests.UpdateClientRequest;
 import com.guildworkman.api.dto.responses.ClientRegistrationResponse;
 import com.guildworkman.api.data.repository.ClientRepository;
@@ -46,10 +49,21 @@ public class ClientServiceTest {
     private AppointmentRepository appointmentRepository;
     @Autowired
     private SkilledWorkerService skilledWorkerService;
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @BeforeEach
     public void setUp() {
       appointmentRepository.deleteAll();
+    }
+
+    /** Push pending changes to the DB and drop the first-level cache, so the next
+     *  read reflects what was actually persisted rather than the in-memory graph.
+     *  Every test here runs in one transaction, so without this a state change can
+     *  appear to work while never reaching the database. */
+    private void reloadFromDatabase() {
+        entityManager.flush();
+        entityManager.clear();
     }
 
     @Test
@@ -161,6 +175,94 @@ public class ClientServiceTest {
 
         assertThat(appointments).hasSize(1);
         assertThat(appointments.get(0).getWorker()).isNull();
+    }
+
+    @Test
+    public void cancelAppointment_marksItCancelled_andKeepsTheRecord() {
+        ClientRegistrationResponse client = clientService.registerClient(getRegistrationRequest());
+        clientService.bookAppointment(
+                bookRequest(client.getClientId(), Category.ELECTRICAL, LocalDateTime.now().plusDays(2)));
+
+        Long appointmentId = clientService.viewAllAppointment(client.getClientId()).get(0).getId();
+        clientService.cancelAppointment(appointmentId);
+        reloadFromDatabase();
+
+        List<ViewAllAppointmentsResponse> appointments =
+                clientService.viewAllAppointment(client.getClientId());
+
+        // Cancelling used to remove the appointment from client.getAppointment(),
+        // and because that relation is orphanRemoval = true the row was DELETED —
+        // the client lost the record and CANCELLED was never observable.
+        assertThat(appointments).hasSize(1);
+        assertThat(appointments.get(0).getId()).isEqualTo(appointmentId);
+        assertThat(appointments.get(0).getStatus()).isEqualTo(CANCELLED);
+    }
+
+    @Test
+    public void updateAppointment_appliesTheRequestedStatus() {
+        ClientRegistrationResponse client = clientService.registerClient(getRegistrationRequest());
+        clientService.bookAppointment(
+                bookRequest(client.getClientId(), Category.PLUMBING, LocalDateTime.now().plusDays(2)));
+
+        Long appointmentId = clientService.viewAllAppointment(client.getClientId()).get(0).getId();
+
+        UpdateAppointmentRequest request = new UpdateAppointmentRequest();
+        request.setStatus(AppointmentStatus.ACCEPTED);
+        clientService.updateAppointment(appointmentId, request);
+        reloadFromDatabase();
+
+        // The requested status used to be ignored entirely: the request was mapped
+        // into a throwaway Appointment and the status hardcoded to UPDATED, so
+        // accept/decline never changed anything.
+        assertThat(clientService.viewAllAppointment(client.getClientId()).get(0).getStatus())
+                .isEqualTo(AppointmentStatus.ACCEPTED);
+    }
+
+    @Test
+    public void deleteAppointment_withAWorkerAttached_removesTheRowFromTheDatabase() {
+        ClientRegistrationResponse client = clientService.registerClient(getRegistrationRequest());
+        SkilledWorkerRegistrationResponse worker = registerWorker("Bola Adeyemi", "bola@wood.com");
+
+        // Attach a worker: that's the realistic case now that bookings record one,
+        // and it's the case that broke in a real request. Client.appointment AND
+        // SkilledWorker.appointment are both cascade = ALL + orphanRemoval + EAGER,
+        // so a worker left holding this appointment cascades a PERSIST back over it
+        // at flush and RESURRECTS it — no DELETE is issued and the caller is still
+        // told it succeeded.
+        //
+        // Caveat, stated plainly: this test passes with or without the worker-side
+        // detach, because a single-transaction test doesn't reproduce the session
+        // state of a real request. The fix was verified against a running server
+        // (Hibernate emits `delete from appointments where id=?`, and the row is
+        // gone from Postgres). This test guards the delete contract, not that bug.
+        BookAppointmentRequest request =
+                bookRequest(client.getClientId(), Category.CARPENTRY, LocalDateTime.now().plusDays(2));
+        request.setSkilledWorkerId(worker.getSkilledWorkerId());
+        clientService.bookAppointment(request);
+
+        // Clear the session BEFORE deleting. Otherwise the worker still carries the
+        // empty collection it was registered with, the delete path never hydrates it
+        // from the database, and nothing resurrects the appointment — the test would
+        // pass against the broken code. A real HTTP request always starts cold.
+        reloadFromDatabase();
+
+        Long appointmentId = clientService.viewAllAppointment(client.getClientId()).get(0).getId();
+        clientService.deleteAppointment(appointmentId);
+
+        // Flush and clear again, or the assertion only observes the in-memory
+        // collection mutation and passes even when no DELETE reaches the database.
+        reloadFromDatabase();
+
+        assertThat(appointmentRepository.findById(appointmentId)).isEmpty();
+        assertThat(clientService.viewAllAppointment(client.getClientId())).isEmpty();
+    }
+
+    private SkilledWorkerRegistrationResponse registerWorker(String fullName, String email) {
+        RegistrationRequest request = new RegistrationRequest();
+        request.setFullName(fullName);
+        request.setEmail(email);
+        request.setPassword("password1");
+        return skilledWorkerService.registerSkilledWorker(request);
     }
 
     @Test

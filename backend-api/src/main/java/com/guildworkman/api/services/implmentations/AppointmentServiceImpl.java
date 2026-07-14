@@ -84,12 +84,23 @@ public class AppointmentServiceImpl implements AppointmentService {
         Appointment appointment = appointmentRepository.findById(Id)
                 .orElseThrow(()-> new AppointmentNotFoundException("No appointment found"));
 
-        modelMapper.map(request, Appointment.class);
-        appointment.setStatus(AppointmentStatus.UPDATED);
+        // Apply what the caller actually asked for. This used to map the request
+        // into a THROWAWAY Appointment (the result was discarded) and then hardcode
+        // UPDATED — so ACCEPTED/DECLINED never reached the database and accepting or
+        // declining a job did nothing at all.
+        appointment.setStatus(request.getStatus() != null
+                ? request.getStatus()
+                : AppointmentStatus.UPDATED);
+        if (request.getAmount() != null) {
+            appointment.setAmount(request.getAmount());
+        }
+        if (request.getStartTime() != null) {
+            appointment.setScheduleTime(request.getStartTime());
+        }
         appointmentRepository.save(appointment);
 
         UpdateAppointmentResponse response = new UpdateAppointmentResponse();
-        response .setId(appointment.getId());
+        response.setId(appointment.getId());
         response.setMessage("Appointment Updated");
         return response;
     }
