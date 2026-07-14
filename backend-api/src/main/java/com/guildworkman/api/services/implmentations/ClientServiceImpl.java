@@ -133,21 +133,38 @@ public class ClientServiceImpl implements ClientService {
          return response;
     }
     @Override
-    public ViewAllAppointmentsResponse viewAllAppointment(Long id) {
+    public List<ViewAllAppointmentsResponse> viewAllAppointment(Long id) {
         Client client = clientRepository.findById(id)
                 .orElseThrow(() -> new UserNotFoundException("User not found"));
 
         List<Appointment> appointments = client.getAppointment();
 
-        if (appointments.isEmpty()) {
-            throw new IllegalArgumentException("No appointments found for this client");
+        // A client with no appointments is a valid, empty result — not an error.
+        if (appointments == null || appointments.isEmpty()) {
+            return List.of();
         }
 
-        Appointment appointment = appointments.get(0);
+        return appointments.stream()
+                .map(this::toViewAllAppointmentsResponse)
+                .collect(Collectors.toList());
+    }
 
+    private ViewAllAppointmentsResponse toViewAllAppointmentsResponse(Appointment appointment) {
         ViewAllAppointmentsResponse response = new ViewAllAppointmentsResponse();
+        response.setId(appointment.getId());
+        response.setStatus(appointment.getStatus());
         response.setCategory(appointment.getCategory());
         response.setScheduleTime(appointment.getScheduleTime());
+        response.setAmount(appointment.getAmount());
+
+        SkilledWorker skilledWorker = appointment.getSkilledWorker();
+        if (skilledWorker != null) {
+            AppointmentWorkerResponse worker = new AppointmentWorkerResponse();
+            worker.setId(skilledWorker.getId());
+            worker.setFullName(skilledWorker.getFullName());
+            worker.setCategory(skilledWorker.getCategory());
+            response.setWorker(worker);
+        }
 
         return response;
     }

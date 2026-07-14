@@ -19,7 +19,6 @@ import java.util.Map;
 
 import static org.springframework.http.HttpStatus.CREATED;
 
-@CrossOrigin(origins = "*")
 @RestController
 @RequestMapping("/api/v1/client")
 @AllArgsConstructor
@@ -66,8 +65,8 @@ public class ClientController {
 
     @GetMapping("/viewAllAppointment")
     public ResponseEntity<?> viewAllAppointment(@RequestParam Long clientId){
-        System.out.println("Received clientId: " + clientId);
-        return ResponseEntity.status(CREATED)
+        // A read returns 200 OK, not 201 CREATED.
+        return ResponseEntity.status(HttpStatus.OK)
                .body(new ApiResponse
                         (clientService.viewAllAppointment(clientId),true));
     }

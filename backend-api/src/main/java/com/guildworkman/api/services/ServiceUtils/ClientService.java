@@ -19,7 +19,7 @@ public interface ClientService {
 
     DeleteAppointmentResponse deleteAppointment(Long id, DeleteAppointmentRequest request);
 
-    ViewAllAppointmentsResponse viewAllAppointment(Long id);
+    List<ViewAllAppointmentsResponse> viewAllAppointment(Long id);
 
     Client findById(Long clientId);
 

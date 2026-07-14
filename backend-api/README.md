@@ -232,13 +232,12 @@ All endpoints are prefixed `/api/v1/...`. Responses are wrapped in a common
 | PUT | `/updateAppointment?appointmentId=` | Update an existing appointment |
 | PUT | `/cancelAppointment?appointmentId=` | Cancel an appointment |
 | DELETE | `/deleteAppointment?appointmentId=` | Delete an appointment |
-| GET | `/viewAllAppointment?clientId=` | List a client's appointments |
+| GET | `/viewAllAppointment?clientId=` | **List** of a client's appointments (`id`, `status`, `category`, `scheduleTime`, `amount`, `worker`) |
 | PUT | `/updateClientProfile` | Update client profile |
 | POST | `/consult?clientId=&workerId=&details=` | Book a consultation |
 | POST | `/{consultationId}/availability?clientAvailability=&workerAvailability=` | Schedule consultation availability |
 
-CORS: allows all origins (`*`) — broader than the other two controllers,
-worth tightening before production hardening.
+CORS: configured globally (see below) — no per-controller `@CrossOrigin`.
 
 ### `SkilledWorkerController` — `/api/v1/skilledWorker`
 
@@ -252,7 +251,7 @@ worth tightening before production hardening.
 | PUT | `/updateSkilledWorkerProfile` | Update worker profile |
 | GET | `/nearby?lat=&lon=&radius=` | Find workers near a location (`radius` defaults to 10) |
 
-CORS: restricted to `https://guildworkman.vercel.app/`.
+CORS: configured globally (see below) — no per-controller `@CrossOrigin`.
 
 ### `MailController` — `/api/v1/mail`
 
@@ -260,7 +259,23 @@ CORS: restricted to `https://guildworkman.vercel.app/`.
 |---|---|---|
 | POST | `/sendMail` | Send a transactional email |
 
-CORS: restricted to `https://guildworkman.vercel.app/`.
+CORS: configured globally (see below) — no per-controller `@CrossOrigin`.
+
+### CORS
+
+CORS is configured in **one place** — `config/WebConfig` — from the
+`cors.allowed-origins` property (env `CORS_ALLOWED_ORIGINS`), a comma-separated
+list. Default:
+
+```
+http://localhost:3000,https://guildworkman-web.vercel.app
+```
+
+It uses `allowedOriginPatterns`, so wildcard patterns (e.g. `https://*.vercel.app`
+for preview deployments) stay compatible with `allowCredentials(true)` — Spring
+forbids that combination with a literal `"*"`. Don't add `@CrossOrigin` to
+controllers: handler-level annotations get combined with this config and
+previously drifted out of sync.
 
 ## Testing
 

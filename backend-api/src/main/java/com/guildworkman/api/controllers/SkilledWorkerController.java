@@ -15,7 +15,6 @@ import java.util.List;
 
 import static org.springframework.http.HttpStatus.CREATED;
 
-@CrossOrigin(origins = "https://guildworkman.vercel.app/")
 @RestController
 @RequestMapping("/api/v1/skilledWorker")
 @AllArgsConstructor
