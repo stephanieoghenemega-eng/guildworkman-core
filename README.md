@@ -258,6 +258,9 @@ integration:
   consultations, worker profiles and `/nearby` geo lookup, transactional email.
 - `viewAllAppointment` returns a **list** of the client's appointments, each with
   the `id` the cancel/update/delete endpoints require.
+- Bookings record **which worker** was booked and the agreed **amount**
+  (`skilledWorkerId` + `amount` on `bookAppointment`, both optional), so each
+  appointment comes back with a `worker` summary.
 - CORS is configured in one place (`WebConfig`) from `CORS_ALLOWED_ORIGINS`, and
   allows the live frontend.
 - All three Soroban contracts are implemented and unit-tested.
@@ -273,13 +276,8 @@ integration:
   `MapController` exist but are commented out; `AdminServiceImpl` has no
   controller; `ReviewServiceImpl` and its DTOs are implemented and tested but
   not exposed. The business logic is there — the endpoints aren't.
-- ⚠️ **Bookings don't record *which worker* was booked.**
-  `BookAppointmentRequest` has no `skilledWorkerId`, and nothing ever sets
-  `Appointment.skilledWorker` or `Appointment.amount` (the one `setSkilledWorker`
-  call is commented out). So an appointment knows its client, category, time and
-  status — but not the tradesperson. `viewAllAppointment` therefore returns
-  `worker` and `amount` as `null`. The web app already lets a client pick a
-  specific pro, so **this is the next gap to close** in the booking flow.
+- ⚠️ **No escrow, still.** Payments go through Paystack; the Soroban escrow
+  contract is not in the loop (see the first item above).
 
 ## Branching & contributing
 

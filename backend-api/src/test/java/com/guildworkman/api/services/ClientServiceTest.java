@@ -12,8 +12,10 @@ import com.guildworkman.api.dto.responses.ClientRegistrationResponse;
 import com.guildworkman.api.data.repository.ClientRepository;
 import com.guildworkman.api.dto.responses.UpdateClientResponse;
 import com.guildworkman.api.dto.responses.UpdateSkilledWorkerResponse;
+import com.guildworkman.api.dto.responses.SkilledWorkerRegistrationResponse;
 import com.guildworkman.api.dto.responses.ViewAllAppointmentsResponse;
 import com.guildworkman.api.services.ServiceUtils.ClientService;
+import com.guildworkman.api.services.ServiceUtils.SkilledWorkerService;
 import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +24,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.jdbc.Sql;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -41,6 +44,8 @@ public class ClientServiceTest {
     private AddressRepository addressRepository;
     @Autowired
     private AppointmentRepository appointmentRepository;
+    @Autowired
+    private SkilledWorkerService skilledWorkerService;
 
     @BeforeEach
     public void setUp() {
@@ -111,6 +116,51 @@ public class ClientServiceTest {
         assertThat(appointments)
                 .extracting(ViewAllAppointmentsResponse::getCategory)
                 .containsExactlyInAnyOrder(Category.ELECTRICAL, Category.PLUMBING);
+    }
+
+    @Test
+    public void bookAppointment_recordsTheBookedWorker_andAmount() {
+        ClientRegistrationResponse client = clientService.registerClient(getRegistrationRequest());
+
+        RegistrationRequest workerRequest = new RegistrationRequest();
+        workerRequest.setFullName("Chidi Okonkwo");
+        workerRequest.setEmail("chidi@sparks.com");
+        workerRequest.setPassword("password1");
+        SkilledWorkerRegistrationResponse worker =
+                skilledWorkerService.registerSkilledWorker(workerRequest);
+
+        BookAppointmentRequest request =
+                bookRequest(client.getClientId(), Category.ELECTRICAL, LocalDateTime.now().plusDays(3));
+        request.setSkilledWorkerId(worker.getSkilledWorkerId());
+        request.setAmount(BigDecimal.valueOf(8800));
+        clientService.bookAppointment(request);
+
+        List<ViewAllAppointmentsResponse> appointments =
+                clientService.viewAllAppointment(client.getClientId());
+
+        assertThat(appointments).hasSize(1);
+        ViewAllAppointmentsResponse appointment = appointments.get(0);
+
+        // The API previously never recorded WHICH worker was booked — the request
+        // had no skilledWorkerId and nothing set Appointment.skilledWorker.
+        assertThat(appointment.getWorker()).isNotNull();
+        assertThat(appointment.getWorker().getId()).isEqualTo(worker.getSkilledWorkerId());
+        assertThat(appointment.getWorker().getFullName()).isEqualTo("Chidi Okonkwo");
+        assertThat(appointment.getAmount()).isEqualByComparingTo(BigDecimal.valueOf(8800));
+    }
+
+    @Test
+    public void bookAppointment_withoutAWorker_stillSucceeds() {
+        // skilledWorkerId is optional, so existing callers keep working.
+        ClientRegistrationResponse client = clientService.registerClient(getRegistrationRequest());
+        clientService.bookAppointment(
+                bookRequest(client.getClientId(), Category.PLUMBING, LocalDateTime.now().plusDays(1)));
+
+        List<ViewAllAppointmentsResponse> appointments =
+                clientService.viewAllAppointment(client.getClientId());
+
+        assertThat(appointments).hasSize(1);
+        assertThat(appointments.get(0).getWorker()).isNull();
     }
 
     @Test

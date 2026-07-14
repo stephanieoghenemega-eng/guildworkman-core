@@ -8,9 +8,12 @@ import com.guildworkman.api.dto.responses.UpdateAppointmentResponse;
 import com.guildworkman.api.dto.responses.ViewAllAppointmentsResponse;
 import com.guildworkman.api.exceptions.AppointmentNotFoundException;
 import com.guildworkman.api.data.models.Appointment;
+import com.guildworkman.api.data.models.SkilledWorker;
 import com.guildworkman.api.data.constants.AppointmentStatus;
 import com.guildworkman.api.data.repository.AppointmentRepository;
+import com.guildworkman.api.data.repository.SkilledWorkerRepository;
 import com.guildworkman.api.exceptions.GuildWorkmanException;
+import com.guildworkman.api.exceptions.UserNotFoundException;
 import com.guildworkman.api.services.ServiceUtils.AppointmentService;
 import lombok.AllArgsConstructor;
 import org.modelmapper.ModelMapper;
@@ -24,6 +27,7 @@ import java.util.Optional;
 public class AppointmentServiceImpl implements AppointmentService {
     private final AppointmentRepository appointmentRepository;
     private  final ModelMapper modelMapper;
+    private final SkilledWorkerRepository skilledWorkerRepository;
 
 
 //    @Autowired
@@ -35,10 +39,29 @@ public class AppointmentServiceImpl implements AppointmentService {
     public Appointment bookAppointment(BookAppointmentRequest bookAppointmentRequest) {
         Appointment appointment = modelMapper.map(bookAppointmentRequest, Appointment.class);
         appointment.setStatus(AppointmentStatus.SCHEDULED);
+
+        // Record WHICH worker was booked. Set explicitly rather than relying on
+        // ModelMapper, which can implicitly build a transient SkilledWorker from
+        // skilledWorkerId — save that and Hibernate blows up. Resolve the managed
+        // entity (or clear it) before persisting.
+        appointment.setSkilledWorker(resolveSkilledWorker(bookAppointmentRequest.getSkilledWorkerId()));
+        appointment.setAmount(bookAppointmentRequest.getAmount());
+
         appointmentRepository.save(appointment);
 
         return appointment;
 
+    }
+
+    private SkilledWorker resolveSkilledWorker(Long skilledWorkerId) {
+        // Optional: callers that don't send a worker still book successfully,
+        // they just produce an appointment with no worker attached.
+        if (skilledWorkerId == null) {
+            return null;
+        }
+        return skilledWorkerRepository.findById(skilledWorkerId)
+                .orElseThrow(() -> new UserNotFoundException(
+                        "Skilled worker not found: " + skilledWorkerId));
     }
 
 
