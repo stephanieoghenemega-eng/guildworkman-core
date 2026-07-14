@@ -256,6 +256,13 @@ integration:
 **Working today**
 - Client/worker registration + JWT login, appointment booking/update/cancel,
   consultations, worker profiles and `/nearby` geo lookup, transactional email.
+- `viewAllAppointment` returns a **list** of the client's appointments, each with
+  the `id` the cancel/update/delete endpoints require.
+- Bookings record **which worker** was booked and the agreed **amount**
+  (`skilledWorkerId` + `amount` on `bookAppointment`, both optional), so each
+  appointment comes back with a `worker` summary.
+- CORS is configured in one place (`WebConfig`) from `CORS_ALLOWED_ORIGINS`, and
+  allows the live frontend.
 - All three Soroban contracts are implemented and unit-tested.
 
 **Not yet wired**
@@ -269,17 +276,8 @@ integration:
   `MapController` exist but are commented out; `AdminServiceImpl` has no
   controller; `ReviewServiceImpl` and its DTOs are implemented and tested but
   not exposed. The business logic is there — the endpoints aren't.
-- ⚠️ **`viewAllAppointment` returns a single record** (`scheduleTime` +
-  `category`), with no `id`, `status`, or worker — so a client can't obtain an
-  `appointmentId` to cancel/update, and the frontend can't render an
-  appointments list. Fixing this is the main blocker for the web app's account
-  screens; a proposed response shape is specced in
-  [`guildworkman-web/docs/appointments-api-spec.md`](https://github.com/workman-labs/guildworkman-web/blob/dev/docs/appointments-api-spec.md).
-- ⚠️ **CORS origin mismatch.** `SkilledWorkerController` and `MailController`
-  restrict origins to `https://guildworkman.vercel.app/`, but the live frontend
-  is `https://guildworkman-web.vercel.app` — those endpoints can be blocked in
-  production until the allowed origin is corrected. (`ClientController` allows
-  `*`, which is also worth tightening.)
+- ⚠️ **No escrow, still.** Payments go through Paystack; the Soroban escrow
+  contract is not in the loop (see the first item above).
 
 ## Branching & contributing
 

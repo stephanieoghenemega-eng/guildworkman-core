@@ -13,6 +13,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 import static java.time.LocalDateTime.now;
@@ -45,7 +46,10 @@ public class Client {
     private LocalDateTime timeUpdated;
     @OneToMany(mappedBy = "client",
         cascade = CascadeType.ALL,orphanRemoval = true,fetch = FetchType.EAGER)
-    private List<Appointment> appointment;
+    // Initialised so a freshly-persisted Client (whose collection Hibernate hasn't
+    // hydrated yet) is still safe to add to — bookAppointment does
+    // client.getAppointment().add(...), which NPE'd on a null list.
+    private List<Appointment> appointment = new ArrayList<>();
     @OneToOne
     private Address address;
 
