@@ -5,9 +5,16 @@
 //! Computes time-decayed, stake-weighted scores from signed attestations
 //! while resisting Sybil, collusion, and self-dealing attacks.
 
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, BytesN, Env,
-};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, Vec};
+
+use guildworkman_governance_guard as governance;
+pub use guildworkman_governance_guard::PendingUpgrade;
+
+/// Bump when this contract's storage layout actually changes shape and
+/// needs a real transformation in `migrate`. There's no such change yet —
+/// this just proves the version-gated migration path end to end and gives
+/// a real future migration somewhere to hook in.
+const CURRENT_STORAGE_VERSION: u32 = 1;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -108,6 +115,35 @@ pub enum Error {
     GlobalRateLimited = 9,
     SelfDealing = 10,
     Unauthorized = 11,
+    // --- Upgrade governance (see guildworkman-governance-guard) ---
+    GovernanceAlreadyInitialized = 12,
+    GovernanceNotInitialized = 13,
+    InvalidThreshold = 14,
+    DuplicateSigner = 15,
+    NotASigner = 16,
+    NoPendingUpgrade = 17,
+    AlreadyApproved = 18,
+    ProposalExpired = 19,
+    HashMismatch = 20,
+    AlreadyMigrated = 21,
+    NothingToMigrate = 22,
+}
+
+impl From<governance::GovernanceError> for Error {
+    fn from(e: governance::GovernanceError) -> Self {
+        match e {
+            governance::GovernanceError::AlreadyInitialized => Error::GovernanceAlreadyInitialized,
+            governance::GovernanceError::NotInitialized => Error::GovernanceNotInitialized,
+            governance::GovernanceError::InvalidThreshold => Error::InvalidThreshold,
+            governance::GovernanceError::DuplicateSigner => Error::DuplicateSigner,
+            governance::GovernanceError::NotASigner => Error::NotASigner,
+            governance::GovernanceError::NoPendingUpgrade => Error::NoPendingUpgrade,
+            governance::GovernanceError::AlreadyApproved => Error::AlreadyApproved,
+            governance::GovernanceError::ProposalExpired => Error::ProposalExpired,
+            governance::GovernanceError::HashMismatch => Error::HashMismatch,
+            governance::GovernanceError::AlreadyMigrated => Error::AlreadyMigrated,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -121,16 +157,106 @@ pub struct ReputationContract;
 impl ReputationContract {
     // ----- Initialization & admin -----
 
-    pub fn initialize(env: Env, admin: Address, config: Config) -> Result<(), Error> {
+    /// `signers`/`threshold` configure the M-of-N governance guard that
+    /// gates upgrading this contract's code (`propose_upgrade` /
+    /// `approve_upgrade`) and running a post-upgrade migration
+    /// (`migrate`). This is entirely separate from `admin` above — a
+    /// compromised or colluding signer set can only ever swap this
+    /// contract's code, never call `update_config`, `set_stake`, or
+    /// `recalculate_score` directly.
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        config: Config,
+        governance_init: governance::GovernanceInit,
+    ) -> Result<(), Error> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(Error::AlreadyInitialized);
         }
         Self::validate_config(&config)?;
+        governance::init_governance(&env, governance_init)?;
 
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Config, &config);
         Self::bump_instance(&env);
         Ok(())
+    }
+
+    // ----- Upgrade governance -----
+
+    /// Opens (or, with a 1-of-N guard, immediately executes) a proposal to
+    /// replace this contract's code with `wasm_hash`, which must already
+    /// be uploaded on the network. Returns `true` if this call's approval
+    /// reached the configured threshold, in which case the swap has
+    /// already happened — it takes effect after this invocation finishes.
+    pub fn propose_upgrade(
+        env: Env,
+        proposer: Address,
+        wasm_hash: BytesN<32>,
+    ) -> Result<bool, Error> {
+        let ready = governance::propose_upgrade(&env, proposer, wasm_hash.clone())?;
+        if ready {
+            env.deployer().update_current_contract_wasm(wasm_hash);
+        }
+        Ok(ready)
+    }
+
+    /// Approves the currently pending upgrade proposal. Returns `true` if
+    /// this approval reached the threshold, in which case the swap has
+    /// already happened.
+    pub fn approve_upgrade(
+        env: Env,
+        approver: Address,
+        wasm_hash: BytesN<32>,
+    ) -> Result<bool, Error> {
+        let ready = governance::approve_upgrade(&env, approver, wasm_hash.clone())?;
+        if ready {
+            env.deployer().update_current_contract_wasm(wasm_hash);
+        }
+        Ok(ready)
+    }
+
+    /// Any signer can cancel the pending proposal outright, whether or
+    /// not they approved it.
+    pub fn cancel_upgrade(env: Env, caller: Address) -> Result<(), Error> {
+        governance::cancel_upgrade(&env, caller).map_err(Into::into)
+    }
+
+    /// Runs this code version's storage migration, if one is owed. Callable
+    /// by any signer (not the full threshold) — the risky decision, which
+    /// code to trust, was already gated by the upgrade's multi-sig
+    /// threshold; this just runs the migration that code ships with.
+    /// A no-op contract upgrade (no storage shape change) has nothing to
+    /// migrate and this returns `NothingToMigrate`.
+    pub fn migrate(env: Env, signer: Address) -> Result<(), Error> {
+        governance::require_signer(&env, &signer)?;
+
+        if governance::current_storage_version(&env) >= CURRENT_STORAGE_VERSION {
+            return Err(Error::NothingToMigrate);
+        }
+
+        // No storage shape has changed since v1 — nothing to transform.
+        // A real future migration adds its field-by-field logic here,
+        // guarded by the same version check above.
+
+        governance::mark_migrated(&env, CURRENT_STORAGE_VERSION)?;
+        Ok(())
+    }
+
+    pub fn get_signers(env: Env) -> Vec<Address> {
+        governance::get_signers(&env)
+    }
+
+    pub fn get_upgrade_threshold(env: Env) -> u32 {
+        governance::get_threshold(&env)
+    }
+
+    pub fn get_pending_upgrade(env: Env) -> Option<PendingUpgrade> {
+        governance::get_pending_upgrade(&env)
+    }
+
+    pub fn get_storage_version(env: Env) -> u32 {
+        governance::current_storage_version(&env)
     }
 
     pub fn update_config(env: Env, config: Config) -> Result<(), Error> {
@@ -145,8 +271,7 @@ impl ReputationContract {
         Self::require_admin(&env)?;
         let key = DataKey::Stake(user);
         env.storage().persistent().set(&key, &stake);
-        env
-            .storage()
+        env.storage()
             .persistent()
             .extend_ttl(&key, LEDGERS_THRESHOLD, LEDGERS_EXTEND_TO);
         Ok(())
@@ -201,22 +326,14 @@ impl ReputationContract {
         // 7. Per-reviewer rate limit.
         let window_index = Self::window_index(&env, &config);
         let reviewer_key = DataKey::ReviewerWindow(client.clone(), window_index);
-        let reviewer_count: u32 = env
-            .storage()
-            .temporary()
-            .get(&reviewer_key)
-            .unwrap_or(0);
+        let reviewer_count: u32 = env.storage().temporary().get(&reviewer_key).unwrap_or(0);
         if reviewer_count >= config.reviewer_cap {
             return Err(Error::ReviewerRateLimited);
         }
 
         // 8. Global rate limit.
         let global_key = DataKey::GlobalReviewWindow(window_index);
-        let global_count: u32 = env
-            .storage()
-            .temporary()
-            .get(&global_key)
-            .unwrap_or(0);
+        let global_count: u32 = env.storage().temporary().get(&global_key).unwrap_or(0);
         if global_count >= config.global_cap {
             return Err(Error::GlobalRateLimited);
         }
@@ -233,11 +350,7 @@ impl ReputationContract {
 
         // Store attestation.
         let count_key = DataKey::ReviewCount(worker.clone());
-        let index: u32 = env
-            .storage()
-            .persistent()
-            .get(&count_key)
-            .unwrap_or(0);
+        let index: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
         let attestation = Attestation {
             client: client.clone(),
             worker: worker.clone(),
@@ -264,11 +377,8 @@ impl ReputationContract {
         let weight_contribution = effective_stake as i128 * decay_weight;
 
         let acc_key = DataKey::WeightedScore(worker.clone());
-        let mut acc: WeightedScoreAccumulator = env
-            .storage()
-            .persistent()
-            .get(&acc_key)
-            .unwrap_or_default();
+        let mut acc: WeightedScoreAccumulator =
+            env.storage().persistent().get(&acc_key).unwrap_or_default();
         acc.weighted_sum += weighted_contribution;
         acc.weight_sum += weight_contribution;
         acc.count += 1;
@@ -283,12 +393,16 @@ impl ReputationContract {
         env.storage()
             .temporary()
             .set(&reviewer_key, &(reviewer_count + 1));
-        env.storage().temporary().extend_ttl(&reviewer_key, window_ttl, window_ttl);
+        env.storage()
+            .temporary()
+            .extend_ttl(&reviewer_key, window_ttl, window_ttl);
 
         env.storage()
             .temporary()
             .set(&global_key, &(global_count + 1));
-        env.storage().temporary().extend_ttl(&global_key, window_ttl, window_ttl);
+        env.storage()
+            .temporary()
+            .extend_ttl(&global_key, window_ttl, window_ttl);
 
         Ok(())
     }
@@ -310,10 +424,7 @@ impl ReputationContract {
         worker: Address,
     ) -> Result<WeightedScoreAccumulator, Error> {
         let key = DataKey::WeightedScore(worker);
-        env.storage()
-            .persistent()
-            .get(&key)
-            .ok_or(Error::NoReviews)
+        env.storage().persistent().get(&key).ok_or(Error::NoReviews)
     }
 
     pub fn get_attestation(env: Env, worker: Address, index: u32) -> Option<Attestation> {
@@ -435,7 +546,11 @@ impl ReputationContract {
         }
         let decay = age as i128 * config.decay_rate_bps as i128;
         let weight = SCALE - decay;
-        if weight < 0 { 0 } else { weight }
+        if weight < 0 {
+            0
+        } else {
+            weight
+        }
     }
 
     fn bump_instance(env: &Env) {

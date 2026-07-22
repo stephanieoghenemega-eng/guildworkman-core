@@ -729,6 +729,14 @@ dependencies = [
 name = "guildworkman-escrow"
 version = "0.1.0"
 dependencies = [
+ "guildworkman-governance-guard",
+ "soroban-sdk",
+]
+
+[[package]]
+name = "guildworkman-governance-guard"
+version = "0.1.0"
+dependencies = [
  "soroban-sdk",
 ]
 
@@ -736,6 +744,7 @@ dependencies = [
 name = "guildworkman-loyalty-emissions"
 version = "0.1.0"
 dependencies = [
+ "guildworkman-governance-guard",
  "guildworkman-loyalty-token",
  "soroban-sdk",
 ]
@@ -744,6 +753,7 @@ dependencies = [
 name = "guildworkman-loyalty-token"
 version = "0.1.0"
 dependencies = [
+ "guildworkman-governance-guard",
  "soroban-sdk",
 ]
 
@@ -751,6 +761,7 @@ dependencies = [
 name = "guildworkman-reputation"
 version = "0.1.0"
 dependencies = [
+ "guildworkman-governance-guard",
  "soroban-sdk",
 ]
 
