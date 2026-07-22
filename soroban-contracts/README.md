@@ -3,7 +3,7 @@
 ![CI](https://github.com/workman-labs/guildworkman-contracts/actions/workflows/ci.yml/badge.svg)
 
 Soroban (Stellar) smart contracts for GuildWorkman, the skilled-worker booking
-marketplace. This workspace has four independent contracts:
+marketplace. This workspace has five independent contracts:
 
 | Contract | Path | Purpose |
 |---|---|---|
@@ -11,7 +11,8 @@ marketplace. This workspace has four independent contracts:
 | `reputation` | `contracts/reputation` | Stores one immutable review per completed appointment and keeps a running rating aggregate per skilled worker. |
 | `loyalty-token` | `contracts/loyalty-token` | A SEP-41-style fungible token used to reward clients/workers with points on completed appointments. Only a designated `minter` (the backend's service account) can mint. |
 | `loyalty-emissions` | `contracts/loyalty-emissions` | An emission engine that owns the `loyalty-token`'s `minter` role. Instead of minting rewards in a lump sum, it streams them out of per-account linear vesting schedules, throttled by per-account and global rate limits, and lets the admin reclaim allocations left unclaimed past a deadline. |
-| `governance-guard` | `contracts/governance-guard` | Not a deployed contract — a shared library the four above depend on, providing the multi-sig upgrade/migration pattern described in [Upgrade governance](#upgrade-governance). |
+| `dispute-resolution` | `contracts/dispute-resolution` | Decentralized alternative to `escrow`'s single-admin arbitration: resolves a dispute via a **staked jury** using **commit-reveal** voting, then pays the majority out of the slashed stakes of the minority and no-shows. |
+| `governance-guard` | `contracts/governance-guard` | Not a deployed contract — a shared library that four of the contracts above (all except `dispute-resolution`) depend on, providing the multi-sig upgrade/migration pattern described in [Upgrade governance](#upgrade-governance). |
 
 These mirror the domain already implemented server-side in the backend
 ([`../backend-api`](../backend-api): `AppointmentService`, `ReviewService`,
@@ -185,6 +186,16 @@ Each contract has unit tests under `contracts/<name>/src/test.rs` using
   schedule params, reclaim-before-vesting-end, double-claim, double-reclaim,
   claiming a missing/reclaimed schedule, and looping claims across many windows
   never mints more than a schedule's `total`.
+- **dispute-resolution** (27 tests): the full commit → reveal → resolve →
+  withdraw lifecycle pays a plaintiff- or defendant-majority jury out of the
+  losers' stakes; a no-show who committed but never revealed is slashed and
+  their stake flows to the winners; a tie or a below-quorum turnout refunds
+  every staker (including non-revealers) with no slashing; the state machine
+  rejects committing/revealing/resolving/withdrawing out of phase; and
+  adversarial paths — double-init, bad config, duplicate/same-party disputes,
+  double commit/reveal/resolve/withdraw, revealing with the wrong vote or salt,
+  a copycat replaying another juror's commitment being unable to reveal it, and
+  a slashed loser never draining the pot via repeated withdrawals.
 
 These are unit tests against the in-process Soroban test host
 (`Env::default()` + `mock_all_auths()`), not integration tests against a real
@@ -206,8 +217,9 @@ stellar contract invoke \
 ```
 
 Repeat `deploy` for `guildworkman_reputation.wasm`,
-`guildworkman_loyalty_token.wasm`, and `guildworkman_loyalty_emissions.wasm`,
-then call each contract's `initialize` once. For the emission engine to be
+`guildworkman_loyalty_token.wasm`, `guildworkman_loyalty_emissions.wasm`, and
+`guildworkman_dispute_resolution.wasm`, then call each contract's `initialize`
+once. For the emission engine to be
 able to mint, point it at the token in its `initialize` and then hand it the
 token's `minter` role:
 
@@ -556,6 +568,122 @@ stellar contract invoke --id $EMISSIONS --source admin --network testnet \
   -- reclaim --beneficiary $WORKER_ADDR
 ```
 
+### dispute-resolution
+
+> ⚠️ **v1, unaudited, no appeals** — single-round staked-jury voting with no sybil-resistant/weighted jury selection. Read [Security considerations / known limitations](#security-considerations--known-limitations) before integrating.
+
+Decentralized dispute resolution: a staked jury decides the outcome via
+commit-reveal voting, and the majority is paid out of the slashed stakes of the
+minority and no-shows. This is the trust-minimized counterpart to `escrow`'s
+admin-only `resolve_dispute` — an integration could have `escrow` read a
+resolved dispute's `Outcome` instead of trusting a single arbiter.
+
+- `initialize(admin: Address, token: Address, config: Config)` — `config` is
+  `{ juror_stake: i128, min_jurors: u32, commit_window: u32, reveal_window: u32 }`
+- `open_dispute(dispute_id: u64, plaintiff: Address, defendant: Address)` —
+  admin-only; starts the commit phase (`commit_deadline = now + commit_window`,
+  `reveal_deadline = commit_deadline + reveal_window`)
+- `commit_vote(dispute_id: u64, juror: Address, commitment: BytesN<32>)` —
+  juror-authorized; stakes `juror_stake` and records a hidden vote. Accepted
+  only while `now <= commit_deadline`
+- `reveal_vote(dispute_id: u64, juror: Address, vote: bool, salt: BytesN<32>)` —
+  juror-authorized; discloses the vote (`true` = plaintiff, `false` = defendant)
+  during the reveal phase. `vote`+`salt` must hash to the committed value
+- `resolve(dispute_id: u64) -> Outcome` — permissionless; after
+  `reveal_deadline`, tallies revealed votes and fixes the per-winner reward
+- `withdraw(dispute_id: u64, juror: Address) -> i128` — juror-authorized;
+  after resolution, pays a winning juror `juror_stake + reward_per_winner`,
+  refunds every staker on a tie/quorum-failure, and slashes losers/no-shows
+- `compute_commitment(juror: Address, vote: bool, salt: BytesN<32>) -> BytesN<32>` —
+  helper so callers build the commitment with the exact domain separation the
+  contract enforces
+- `get_dispute(dispute_id) -> Dispute`, `get_juror(dispute_id, juror) -> Juror`,
+  `get_config() -> Config`, `get_admin() -> Address`, `get_token() -> Address`
+  — read-only views
+
+#### Commit-reveal & incentive model
+
+A juror votes in two steps so no one can copy the current leader or be coerced
+for a visible vote:
+
+1. **Commit**: submit `commitment = sha256(salt || vote_byte || juror_xdr)` and
+   stake `juror_stake`. Binding the juror's own address into the preimage means
+   a copycat who replays someone else's commitment can never produce a matching
+   reveal from their own address.
+2. **Reveal**: disclose `(vote, salt)`; the contract recomputes the hash and, on
+   a match, records the vote and bumps the tally.
+
+At `resolve` the side with more revealed votes wins. The **slashed pot** — the
+stakes of the minority voters *and* of everyone who committed but never revealed
+— is split evenly among the winners (integer division; any remainder dust stays
+in the contract). On a **tie** or a turnout below `min_jurors` (`QuorumFailed`)
+nobody is slashed and every staker reclaims their stake. Withdrawals use a pull
+pattern, so resolution never loops over an unbounded juror set, and a juror is
+marked settled before any transfer (checks-effects-interactions).
+
+#### Storage layout
+
+| `DataKey` variant | Storage | Holds |
+|---|---|---|
+| `Admin` | instance | The `Address` allowed to `open_dispute`, set once in `initialize`. |
+| `Token` | instance | The staking-token contract `Address` jurors post collateral in and are paid from. |
+| `Config` | instance | `Config { juror_stake, min_jurors, commit_window, reveal_window }`, fixed at `initialize`. |
+| `Dispute(u64)` | persistent | A `Dispute { plaintiff, defendant, commit_deadline, reveal_deadline, juror_count, yes_count, no_count, outcome, reward_per_winner, resolved }` per `dispute_id`. |
+| `Juror(u64, Address)` | persistent | A `Juror { commitment, revealed, vote, withdrawn }` per `(dispute_id, juror)`. |
+
+#### Errors
+
+| Variant | Code | Meaning |
+|---|---|---|
+| `AlreadyInitialized` | 1 | `initialize` called more than once. |
+| `NotInitialized` | 2 | A method needing state was called before `initialize`. |
+| `InvalidConfig` | 3 | A non-positive stake, or a zero quorum/commit/reveal window, passed to `initialize`. |
+| `DisputeExists` | 4 | `open_dispute` reused an existing `dispute_id`. |
+| `DisputeNotFound` | 5 | No dispute stored under that `dispute_id`. |
+| `NotCommitPhase` | 6 | `commit_vote` after the commit deadline. |
+| `NotRevealPhase` | 7 | `reveal_vote` outside the reveal window. |
+| `AlreadyCommitted` | 8 | `commit_vote` twice for the same `(dispute, juror)`. |
+| `NotCommitted` | 9 | `reveal_vote`/`withdraw`/`get_juror` for a juror who never committed. |
+| `AlreadyRevealed` | 10 | `reveal_vote` twice. |
+| `InvalidReveal` | 11 | Revealed `(vote, salt)` doesn't hash to the stored commitment. |
+| `NotResolvable` | 12 | `resolve` called on or before the reveal deadline. |
+| `AlreadyResolved` | 13 | `resolve` called on an already-resolved dispute. |
+| `NotResolved` | 14 | `withdraw` before the dispute is resolved. |
+| `AlreadyWithdrawn` | 15 | `withdraw` called twice by the same juror. |
+| `NothingToWithdraw` | 16 | `withdraw` by a slashed juror (minority voter or no-show) on a decided dispute. |
+| `SameParties` | 17 | `open_dispute` with `plaintiff == defendant`. |
+
+#### CLI usage
+
+```sh
+# One-time setup: stake 100 units, quorum of 3, ~1h commit + ~1h reveal windows.
+stellar contract invoke --id $DISPUTES --source admin --network testnet \
+  -- initialize --admin $ADMIN_ADDR --token $TOKEN_ADDR \
+     --config '{ "juror_stake": "100", "min_jurors": 3, "commit_window": 720, "reveal_window": 720 }'
+
+# Admin opens a dispute between a client (plaintiff) and worker (defendant).
+stellar contract invoke --id $DISPUTES --source admin --network testnet \
+  -- open_dispute --dispute_id 1 --plaintiff $CLIENT_ADDR --defendant $WORKER_ADDR
+
+# A juror builds their commitment off-chain (favoring the plaintiff), then stakes + commits.
+stellar contract invoke --id $DISPUTES --source juror --network testnet \
+  -- compute_commitment --juror $JUROR_ADDR --vote true --salt $SALT_32B_HEX
+stellar contract invoke --id $DISPUTES --source juror --network testnet \
+  -- commit_vote --dispute_id 1 --juror $JUROR_ADDR --commitment $COMMITMENT_HEX
+
+# During the reveal window, the juror discloses their vote and salt.
+stellar contract invoke --id $DISPUTES --source juror --network testnet \
+  -- reveal_vote --dispute_id 1 --juror $JUROR_ADDR --vote true --salt $SALT_32B_HEX
+
+# After the reveal window, anyone tallies the result.
+stellar contract invoke --id $DISPUTES --source anyone --network testnet \
+  -- resolve --dispute_id 1
+
+# Each juror settles: winners collect stake + reward, losers are slashed.
+stellar contract invoke --id $DISPUTES --source juror --network testnet \
+  -- withdraw --dispute_id 1 --juror $JUROR_ADDR
+```
+
 ## Security considerations / known limitations
 
 - **Unaudited.** None of these contracts have had an independent security
@@ -609,6 +737,31 @@ stellar contract invoke --id $EMISSIONS --source admin --network testnet \
   is an arbitrary `String` supplied by the reviewer with no length cap or
   content moderation — treat it as untrusted user input wherever it's
   displayed.
+- **Jury sybil / stake-weighting.** `dispute-resolution` gives every juror who
+  posts `juror_stake` exactly one vote and lets anyone join a dispute during the
+  commit phase. It resists *free* sybils (each identity must lock real
+  collateral) and hidden-vote manipulation (commit-reveal), but it does **not**
+  defend against a well-capitalized actor funding many jurors to swing a verdict
+  — there is no random jury selection, reputation weighting, or per-identity
+  gating. Set `juror_stake`/`min_jurors` relative to the value at stake, and
+  treat this as a coordination mechanism among semi-trusted jurors, not a
+  Kleros-grade court. Reputation-weighted / randomized jury selection (building
+  on the attestation-based reputation scoring in #20) is a deliberate v1 scope
+  boundary tracked in #29, not an oversight.
+- **No appeals and majority-takes-all slashing.** A dispute resolves in a single
+  round; there is no appeal path, and honest jurors who happen to land in the
+  minority are slashed alongside malicious ones. A dishonest majority both wins
+  the verdict and confiscates the honest minority's stake. Ties and below-quorum
+  turnouts are handled safely (everyone is refunded, no slashing), and integer
+  division of the slashed pot can leave at most `winner_count - 1` units of dust
+  in the contract. Slashing the whole minority is an intentional Schelling-point
+  incentive (commit-reveal is what makes it defensible), but softening it for
+  close calls — margin-based partial refunds or an appeal round — is tracked as a
+  candidate v2 direction in #29.
+- **Reveal-phase liveness assumption.** A juror who commits but never reveals is
+  treated as a loser and slashed (on a decided outcome), which is the intended
+  anti-griefing incentive — but it also means a juror censored or offline during
+  the reveal window loses their stake. Size `reveal_window` accordingly.
 
 ## Notes / follow-ups
 

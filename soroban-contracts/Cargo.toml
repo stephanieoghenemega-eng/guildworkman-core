@@ -6,6 +6,7 @@ members = [
     "contracts/loyalty-token",
     "contracts/loyalty-emissions",
     "contracts/governance-guard",
+    "contracts/dispute-resolution",
 ]
 
 [workspace.dependencies]
