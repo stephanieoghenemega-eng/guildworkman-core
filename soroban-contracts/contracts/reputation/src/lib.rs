@@ -5,10 +5,15 @@
 //! Computes time-decayed, stake-weighted scores from signed attestations
 //! while resisting Sybil, collusion, and self-dealing attacks.
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, BytesN, Env, String, Vec,
+};
 
 use guildworkman_governance_guard as governance;
-pub use guildworkman_governance_guard::{PendingRotation, PendingUpgrade};
+pub use guildworkman_governance_guard::{
+    PauseState, PendingRotation, PendingUpgrade, ALL_SCOPES, MAX_PAUSE_DURATION,
+    MAX_PAUSE_REASON_LEN, SCOPE_ATTESTATION,
+};
 
 /// Bump when this contract's storage layout actually changes shape and
 /// needs a real transformation in `migrate`. There's no such change yet —
@@ -134,6 +139,12 @@ pub enum Error {
     RotationTimelockActive = 26,
     RotationExpired = 27,
     RotationInProgress = 28,
+    // --- Emergency circuit breaker (see guildworkman-governance-guard) ---
+    OperationPaused = 29,
+    InvalidPauseScope = 30,
+    InvalidPauseDuration = 31,
+    NotPaused = 32,
+    InvalidPauseReason = 33,
 }
 
 impl From<governance::GovernanceError> for Error {
@@ -155,6 +166,11 @@ impl From<governance::GovernanceError> for Error {
             governance::GovernanceError::RotationTimelockActive => Error::RotationTimelockActive,
             governance::GovernanceError::RotationExpired => Error::RotationExpired,
             governance::GovernanceError::RotationInProgress => Error::RotationInProgress,
+            governance::GovernanceError::OperationPaused => Error::OperationPaused,
+            governance::GovernanceError::InvalidPauseScope => Error::InvalidPauseScope,
+            governance::GovernanceError::InvalidPauseDuration => Error::InvalidPauseDuration,
+            governance::GovernanceError::NotPaused => Error::NotPaused,
+            governance::GovernanceError::InvalidPauseReason => Error::InvalidPauseReason,
         }
     }
 }
@@ -311,6 +327,51 @@ impl ReputationContract {
         governance::current_storage_version(&env)
     }
 
+    // ----- Emergency circuit breaker -----
+
+    /// Halts `scopes` for `duration_secs` seconds, authorized by any single
+    /// governance signer. Returns the resulting pause record.
+    ///
+    /// The only scope with teeth here is [`SCOPE_ATTESTATION`], which halts
+    /// `submit_attestation`. Scores hold no funds, so nothing in this
+    /// contract can be stranded by a pause; the reason to halt it is a
+    /// scoring incident — a Sybil ring or a collusion pattern poisoning the
+    /// aggregate — which is deliberately independent of anything happening
+    /// in `escrow`. Reads (`get_reputation_score_x10000` and friends) stay
+    /// open throughout: a consumer must always be able to see the scores
+    /// that already exist, including to notice they went bad.
+    pub fn pause(
+        env: Env,
+        caller: Address,
+        scopes: u32,
+        duration_secs: u64,
+        reason: String,
+    ) -> Result<PauseState, Error> {
+        governance::pause(&env, caller, scopes, duration_secs, reason).map_err(Into::into)
+    }
+
+    /// Clears `scopes` from the active pause early. Returns the scopes still
+    /// halted.
+    pub fn unpause(env: Env, caller: Address, scopes: u32) -> Result<u32, Error> {
+        governance::unpause(&env, caller, scopes).map_err(Into::into)
+    }
+
+    /// The active pause record, or `None` if nothing is halted — including
+    /// when a pause was placed but has since auto-expired.
+    pub fn get_pause_state(env: Env) -> Option<PauseState> {
+        governance::get_pause_state(&env)
+    }
+
+    /// Bitmask of currently halted scopes; `0` when the contract is open.
+    pub fn paused_scopes(env: Env) -> u32 {
+        governance::paused_scopes(&env)
+    }
+
+    /// Whether any bit of `scope` is currently halted.
+    pub fn is_paused(env: Env, scope: u32) -> bool {
+        governance::is_paused(&env, scope)
+    }
+
     pub fn update_config(env: Env, config: Config) -> Result<(), Error> {
         Self::require_admin(&env)?;
         Self::validate_config(&config)?;
@@ -331,6 +392,9 @@ impl ReputationContract {
 
     // ----- Core submission -----
 
+    /// Guarded by [`SCOPE_ATTESTATION`]: this is the contract's only
+    /// state-poisoning surface, and halting it is what buys time to ship a
+    /// scoring fix without also freezing payments in `escrow`.
     pub fn submit_attestation(
         env: Env,
         appointment_id: u64,
@@ -339,6 +403,10 @@ impl ReputationContract {
         rating: u32,
         attestation_hash: BytesN<32>,
     ) -> Result<(), Error> {
+        // 0. Circuit breaker, ahead of everything else: a halted operation
+        //    should cost nothing and touch no storage.
+        governance::require_not_paused(&env, governance::SCOPE_ATTESTATION)?;
+
         // 1. Authorization (signed attestation via Soroban auth).
         client.require_auth();
 

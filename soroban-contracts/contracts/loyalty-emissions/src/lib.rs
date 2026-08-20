@@ -42,11 +42,15 @@
 //!   event draining emissions faster than intended.
 
 use soroban_sdk::{
-    contract, contractclient, contracterror, contractimpl, contracttype, Address, BytesN, Env, Vec,
+    contract, contractclient, contracterror, contractimpl, contracttype, Address, BytesN, Env,
+    String, Vec,
 };
 
 use guildworkman_governance_guard as governance;
-pub use guildworkman_governance_guard::{PendingRotation, PendingUpgrade};
+pub use guildworkman_governance_guard::{
+    PauseState, PendingRotation, PendingUpgrade, ALL_SCOPES, MAX_PAUSE_DURATION,
+    MAX_PAUSE_REASON_LEN, SCOPE_INTAKE, SCOPE_SETTLEMENT,
+};
 
 /// Bump when this contract's storage layout actually changes shape and
 /// needs a real transformation in `migrate`. There's no such change yet.
@@ -151,6 +155,12 @@ pub enum Error {
     RotationTimelockActive = 27,
     RotationExpired = 28,
     RotationInProgress = 29,
+    // --- Emergency circuit breaker (see guildworkman-governance-guard) ---
+    OperationPaused = 30,
+    InvalidPauseScope = 31,
+    InvalidPauseDuration = 32,
+    NotPaused = 33,
+    InvalidPauseReason = 34,
 }
 
 impl From<governance::GovernanceError> for Error {
@@ -172,6 +182,11 @@ impl From<governance::GovernanceError> for Error {
             governance::GovernanceError::RotationTimelockActive => Error::RotationTimelockActive,
             governance::GovernanceError::RotationExpired => Error::RotationExpired,
             governance::GovernanceError::RotationInProgress => Error::RotationInProgress,
+            governance::GovernanceError::OperationPaused => Error::OperationPaused,
+            governance::GovernanceError::InvalidPauseScope => Error::InvalidPauseScope,
+            governance::GovernanceError::InvalidPauseDuration => Error::InvalidPauseDuration,
+            governance::GovernanceError::NotPaused => Error::NotPaused,
+            governance::GovernanceError::InvalidPauseReason => Error::InvalidPauseReason,
         }
     }
 }
@@ -313,12 +328,63 @@ impl LoyaltyEmissions {
         governance::current_storage_version(&env)
     }
 
+    // ----- Emergency circuit breaker -----
+
+    /// Halts `scopes` for `duration_secs` seconds, authorized by any single
+    /// governance signer. Returns the resulting pause record.
+    ///
+    /// [`SCOPE_INTAKE`] covers `create_schedule` — new emission obligations
+    /// — and [`SCOPE_SETTLEMENT`] covers `claim`, the path that actually
+    /// mints. `claim` is haltable because it is the only place this engine
+    /// creates supply, so a vesting-math bug is drained through it and
+    /// nowhere else.
+    ///
+    /// Pausing `claim` withholds nothing permanently: vesting is a pure
+    /// function of the ledger clock and keeps accruing while halted, so a
+    /// beneficiary claims the identical amount afterwards, just later. The
+    /// one interaction worth stating explicitly is `reclaim`, which is
+    /// **deliberately unguarded** — see its own note.
+    pub fn pause(
+        env: Env,
+        caller: Address,
+        scopes: u32,
+        duration_secs: u64,
+        reason: String,
+    ) -> Result<PauseState, Error> {
+        governance::pause(&env, caller, scopes, duration_secs, reason).map_err(Into::into)
+    }
+
+    /// Clears `scopes` from the active pause early. Returns the scopes still
+    /// halted.
+    pub fn unpause(env: Env, caller: Address, scopes: u32) -> Result<u32, Error> {
+        governance::unpause(&env, caller, scopes).map_err(Into::into)
+    }
+
+    /// The active pause record, or `None` if nothing is halted — including
+    /// when a pause was placed but has since auto-expired.
+    pub fn get_pause_state(env: Env) -> Option<PauseState> {
+        governance::get_pause_state(&env)
+    }
+
+    /// Bitmask of currently halted scopes; `0` when the contract is open.
+    pub fn paused_scopes(env: Env) -> u32 {
+        governance::paused_scopes(&env)
+    }
+
+    /// Whether any bit of `scope` is currently halted.
+    pub fn is_paused(env: Env, scope: u32) -> bool {
+        governance::is_paused(&env, scope)
+    }
+
     /// Admin-only: register a linear vesting stream for `beneficiary`.
     ///
     /// `start` defaults to the current ledger when `0` is passed. `cliff` must
     /// not exceed `duration`, and `duration` must be positive. Only one active
     /// schedule per beneficiary; reclaim (or a future `total` top-up flow) is
     /// required before re-registering.
+    ///
+    /// Guarded by [`SCOPE_INTAKE`] — registering a schedule is taking on a
+    /// new emission obligation.
     #[allow(clippy::too_many_arguments)]
     pub fn create_schedule(
         env: Env,
@@ -329,6 +395,7 @@ impl LoyaltyEmissions {
         duration: u32,
         reclaimable_after: u32,
     ) -> Result<(), Error> {
+        governance::require_not_paused(&env, governance::SCOPE_INTAKE)?;
         let admin = Self::require_admin(&env)?;
         admin.require_auth();
 
@@ -379,7 +446,14 @@ impl LoyaltyEmissions {
     /// remaining per-window budget. A claim only errors if there is genuinely
     /// nothing available, or if *both* budgets are already exhausted for the
     /// window (so the caller can distinguish "come back later").
+    ///
+    /// Guarded by [`SCOPE_SETTLEMENT`]. A halted claim is a delay, not a
+    /// loss: `vested_amount` is derived from the ledger clock and keeps
+    /// accruing through the pause, so nothing that was owed stops being
+    /// owed. The one place that could still bite is a `reclaimable_after`
+    /// deadline falling inside the pause window — see `reclaim`.
     pub fn claim(env: Env, beneficiary: Address) -> Result<i128, Error> {
+        governance::require_not_paused(&env, governance::SCOPE_SETTLEMENT)?;
         beneficiary.require_auth();
 
         let key = DataKey::Schedule(beneficiary.clone());
@@ -445,6 +519,21 @@ impl LoyaltyEmissions {
     ///
     /// Nothing is minted or burned here — reclaimed units simply never enter
     /// circulation, since the engine only ever mints on `claim`.
+    ///
+    /// **Deliberately unguarded by the circuit breaker.** Because it moves
+    /// no tokens, it can never take a balance a beneficiary already holds,
+    /// so it is not a path a pause needs to close.
+    ///
+    /// It is nonetheless the one action that could combine badly with a
+    /// paused `claim`: an allocation left unclaimed until
+    /// `reclaimable_after` can be reclaimed, and a long enough
+    /// [`SCOPE_SETTLEMENT`] pause spanning that deadline would deny a
+    /// beneficiary the window to claim first. `create_schedule` already
+    /// forbids `reclaimable_after` earlier than full vesting, and
+    /// [`MAX_PAUSE_DURATION`] caps any single pause at seven days, so the
+    /// exposure is bounded and visible rather than open-ended — but an
+    /// operator pausing settlement should still check for schedules whose
+    /// reclaim deadline falls inside the window.
     pub fn reclaim(env: Env, beneficiary: Address) -> Result<i128, Error> {
         let admin = Self::require_admin(&env)?;
         admin.require_auth();

@@ -11,7 +11,10 @@ use soroban_sdk::{
 };
 
 use guildworkman_governance_guard as governance;
-pub use guildworkman_governance_guard::{PendingRotation, PendingUpgrade};
+pub use guildworkman_governance_guard::{
+    PauseState, PendingRotation, PendingUpgrade, ALL_SCOPES, MAX_PAUSE_DURATION,
+    MAX_PAUSE_REASON_LEN, SCOPE_INTAKE,
+};
 
 /// Bump when this contract's storage layout actually changes shape and
 /// needs a real transformation in `migrate`. There's no such change yet.
@@ -69,6 +72,12 @@ pub enum Error {
     RotationTimelockActive = 21,
     RotationExpired = 22,
     RotationInProgress = 23,
+    // --- Emergency circuit breaker (see guildworkman-governance-guard) ---
+    OperationPaused = 24,
+    InvalidPauseScope = 25,
+    InvalidPauseDuration = 26,
+    NotPaused = 27,
+    InvalidPauseReason = 28,
 }
 
 impl From<governance::GovernanceError> for Error {
@@ -90,6 +99,11 @@ impl From<governance::GovernanceError> for Error {
             governance::GovernanceError::RotationTimelockActive => Error::RotationTimelockActive,
             governance::GovernanceError::RotationExpired => Error::RotationExpired,
             governance::GovernanceError::RotationInProgress => Error::RotationInProgress,
+            governance::GovernanceError::OperationPaused => Error::OperationPaused,
+            governance::GovernanceError::InvalidPauseScope => Error::InvalidPauseScope,
+            governance::GovernanceError::InvalidPauseDuration => Error::InvalidPauseDuration,
+            governance::GovernanceError::NotPaused => Error::NotPaused,
+            governance::GovernanceError::InvalidPauseReason => Error::InvalidPauseReason,
         }
     }
 }
@@ -234,6 +248,54 @@ impl LoyaltyToken {
         governance::current_storage_version(&env)
     }
 
+    // ----- Emergency circuit breaker -----
+
+    /// Halts `scopes` for `duration_secs` seconds, authorized by any single
+    /// governance signer. Returns the resulting pause record.
+    ///
+    /// **`mint` is the only guarded entrypoint in this contract**, under
+    /// [`SCOPE_INTAKE`] — it is the sole route by which supply that does
+    /// not yet exist can come into being, and therefore the only place a
+    /// bug or a compromised minter can inflate the ledger.
+    ///
+    /// `transfer`, `transfer_from`, `approve` and `burn` are unguarded and
+    /// stay callable through any pause, because they move *already-held*
+    /// balances. A holder's points are their property; a token that can
+    /// stop its holders from moving what they already own has not built a
+    /// circuit breaker, it has built a freeze. Halting mint stops the
+    /// bleeding without ever reaching into an existing balance.
+    pub fn pause(
+        env: Env,
+        caller: Address,
+        scopes: u32,
+        duration_secs: u64,
+        reason: String,
+    ) -> Result<PauseState, Error> {
+        governance::pause(&env, caller, scopes, duration_secs, reason).map_err(Into::into)
+    }
+
+    /// Clears `scopes` from the active pause early. Returns the scopes still
+    /// halted.
+    pub fn unpause(env: Env, caller: Address, scopes: u32) -> Result<u32, Error> {
+        governance::unpause(&env, caller, scopes).map_err(Into::into)
+    }
+
+    /// The active pause record, or `None` if nothing is halted — including
+    /// when a pause was placed but has since auto-expired.
+    pub fn get_pause_state(env: Env) -> Option<PauseState> {
+        governance::get_pause_state(&env)
+    }
+
+    /// Bitmask of currently halted scopes; `0` when the contract is open.
+    pub fn paused_scopes(env: Env) -> u32 {
+        governance::paused_scopes(&env)
+    }
+
+    /// Whether any bit of `scope` is currently halted.
+    pub fn is_paused(env: Env, scope: u32) -> bool {
+        governance::is_paused(&env, scope)
+    }
+
     /// Admin-only: rotate which address is allowed to mint reward points.
     pub fn set_minter(env: Env, new_minter: Address) -> Result<(), Error> {
         let admin = Self::require_admin(&env)?;
@@ -243,7 +305,13 @@ impl LoyaltyToken {
     }
 
     /// Minter-only: award `amount` loyalty points to `to`.
+    ///
+    /// Guarded by [`SCOPE_INTAKE`] — the contract's only supply-creating
+    /// path. Note that `loyalty-emissions` holds this contract's `minter`
+    /// role, so halting intake here also stops emission `claim`s at the
+    /// token boundary even if the emission engine itself is left open.
     pub fn mint(env: Env, to: Address, amount: i128) -> Result<(), Error> {
+        governance::require_not_paused(&env, governance::SCOPE_INTAKE)?;
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -284,6 +352,8 @@ impl LoyaltyToken {
         Ok(())
     }
 
+    /// **Deliberately unguarded by the circuit breaker** — moves a balance
+    /// the holder already owns. See `pause` for why no scope reaches it.
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) -> Result<(), Error> {
         from.require_auth();
         if amount <= 0 {
@@ -311,6 +381,9 @@ impl LoyaltyToken {
         Ok(())
     }
 
+    /// **Deliberately unguarded by the circuit breaker** — a holder
+    /// destroying their own balance can never be the thing an incident
+    /// needs stopped.
     pub fn burn(env: Env, from: Address, amount: i128) -> Result<(), Error> {
         from.require_auth();
         if amount <= 0 {

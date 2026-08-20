@@ -1,7 +1,8 @@
 #![no_std]
 
-//! Shared multi-sig governance guard for gating contract upgrades and
-//! storage migrations across the GuildWorkman core contracts.
+//! Shared governance guard for the GuildWorkman core contracts: M-of-N
+//! gating of contract upgrades and storage migrations, timelocked signer
+//! rotation, and the emergency circuit breaker in [`pausable`].
 //!
 //! This is a plain library, not a deployed contract on its own. Each
 //! contract that wants safe upgradeability depends on this crate as a path
@@ -11,12 +12,16 @@
 //! (its single `admin`, its config, etc.) and the governance state this
 //! crate manages.
 //!
-//! Deliberately scoped to upgrade/migration only. It does not touch or
+//! Deliberately scoped to protocol-level controls. It does not touch or
 //! replace each contract's existing single-admin auth for its normal
 //! operations (dispute resolution, config updates, minting, and so on) —
-//! that would be a much larger, higher-risk change than this issue asked
-//! for, and a compromised signer set should only ever be able to swap the
-//! contract's code, not reach into its day-to-day admin powers.
+//! that would be a much larger, higher-risk change than any of these
+//! issues asked for, and a compromised signer set should only ever be able
+//! to swap the contract's code or *halt* it, not reach into its day-to-day
+//! admin powers. Note in particular that the circuit breaker can only
+//! block operations, never redirect or seize funds: the strongest thing a
+//! rogue signer gains from [`pausable`] is a bounded, self-expiring denial
+//! of new business, and never custody of anything.
 //!
 //! ## Upgrade flow
 //!
@@ -104,6 +109,10 @@ pub enum GovernanceDataKey {
     /// same time without clobbering each other. Appended last to keep the
     /// existing keys' encodings stable for already-deployed contracts.
     PendingRotation,
+    /// The single emergency-pause record, if any. See the [`pausable`]
+    /// module. Appended after `PendingRotation` for the same reason that
+    /// one was appended last: existing contracts' key encodings stay put.
+    PauseState,
 }
 
 #[contracttype]
@@ -194,6 +203,24 @@ pub enum GovernanceError {
     /// at a time — this is what stops a lone signer from resetting a
     /// rotation's approvals or displacing a scheduled one.
     RotationInProgress = 16,
+    // --- Emergency circuit breaker (see the `pausable` module) ---
+    /// The entrypoint belongs to a scope that is currently paused. A
+    /// dedicated variant, deliberately not folded into any contract's
+    /// existing status error: "the protocol is halted, retry later" and
+    /// "this request was never valid" call for opposite reactions from a
+    /// client, and must not be reported identically.
+    OperationPaused = 17,
+    /// The scope mask passed to `pause`/`unpause` was empty or contained
+    /// bits outside `ALL_SCOPES`.
+    InvalidPauseScope = 18,
+    /// The requested pause duration was zero or exceeded
+    /// `MAX_PAUSE_DURATION`.
+    InvalidPauseDuration = 19,
+    /// `unpause` was called while nothing is in effect — either no pause
+    /// was ever placed, or the one that was has already auto-expired.
+    NotPaused = 20,
+    /// The `reason` passed to `pause` exceeded `MAX_PAUSE_REASON_LEN`.
+    InvalidPauseReason = 21,
 }
 
 /// How long a proposal stays open for approval before it must be
@@ -717,5 +744,15 @@ pub fn get_pending_rotation(env: &Env) -> Option<PendingRotation> {
         .get(&GovernanceDataKey::PendingRotation)
 }
 
+pub mod pausable;
+pub use pausable::{
+    get_pause_state, is_paused, pause, paused_scopes, require_not_paused, unpause, PauseState,
+    Paused, Unpaused, ALL_SCOPES, MAX_PAUSE_DURATION, MAX_PAUSE_REASON_LEN, SCOPE_ATTESTATION,
+    SCOPE_INTAKE, SCOPE_SETTLEMENT,
+};
+
 #[cfg(test)]
 mod test;
+
+#[cfg(test)]
+mod pausable_test;

@@ -21,7 +21,7 @@
 //! | `DataKey::Admin` | instance | `Address` | Admin/arbiter for dispute resolution |
 //! | `DataKey::Appointment(id)` | persistent | `Appointment` | Simple escrow state |
 //! | `DataKey::MilestoneEscrow(id)` | persistent | `MilestoneEscrow` | Milestone escrow state |
-//! | `GovernanceDataKey::*` | instance | governance-guard types | M-of-N upgrade governance |
+//! | `GovernanceDataKey::*` | instance | governance-guard types | M-of-N upgrade governance, signer rotation, and the emergency pause record |
 //!
 //! ## Authorization model
 //!
@@ -31,14 +31,42 @@
 //! - `raise_dispute` / `raise_milestone_dispute`: participant must authorize.
 //! - `resolve_dispute` / `resolve_milestone_dispute`: admin/arbiter must authorize.
 //! - `release_milestone_funds`: permissionless once conditions are met.
+//! - `pause` / `unpause`: any single governance signer (not `admin`).
 //! - All functions follow checks-effects-interactions to prevent reentrancy.
+//!
+//! ## Emergency circuit breaker
+//!
+//! Scoped, self-expiring pausability from `guildworkman-governance-guard`;
+//! see that crate's `pausable` module for the full rationale. In this
+//! contract:
+//!
+//! | Entrypoint | Scope |
+//! |---|---|
+//! | `create_appointment`, `create_milestone_escrow`, `add_milestone` | `SCOPE_INTAKE` |
+//! | `confirm_completion`, `approve_milestone`, `release_milestone_funds` | `SCOPE_SETTLEMENT` |
+//! | `cancel_appointment`, `raise_dispute`, `resolve_dispute`, `raise_milestone_dispute`, `resolve_milestone_dispute` | **none — never pausable** |
+//!
+//! That last row is the design constraint, not an oversight: a pause must
+//! never trap user funds, so every route by which an escrowed balance
+//! reaches whoever is entitled to it is left unguarded. There is no scope
+//! value, `ALL_SCOPES` included, that halts a refund or a dispute. A pause
+//! can therefore stop new money entering and delay a discretionary payout,
+//! but cannot strand money already held here — and it lapses on its own at
+//! `expires_at` with no admin transaction required.
+//!
+//! `pause` carries a length-capped operator `reason` recorded alongside the
+//! deadline, so `get_pause_state` answers "what is halted, until when, and
+//! why" in one read.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, token, Address, BytesN, Env, Vec,
+    contract, contracterror, contractimpl, contracttype, token, Address, BytesN, Env, String, Vec,
 };
 
 use guildworkman_governance_guard as governance;
-pub use guildworkman_governance_guard::{PendingRotation, PendingUpgrade};
+pub use guildworkman_governance_guard::{
+    PauseState, PendingRotation, PendingUpgrade, ALL_SCOPES, MAX_PAUSE_DURATION,
+    MAX_PAUSE_REASON_LEN, SCOPE_INTAKE, SCOPE_SETTLEMENT,
+};
 
 /// Bump when this contract's storage layout actually changes shape and
 /// needs a real transformation in `migrate`. There's no such change yet.
@@ -165,6 +193,12 @@ pub enum Error {
     RotationTimelockActive = 34,
     RotationExpired = 35,
     RotationInProgress = 36,
+    // --- Emergency circuit breaker (see guildworkman-governance-guard) ---
+    OperationPaused = 37,
+    InvalidPauseScope = 38,
+    InvalidPauseDuration = 39,
+    NotPaused = 40,
+    InvalidPauseReason = 41,
 }
 
 impl From<governance::GovernanceError> for Error {
@@ -186,6 +220,11 @@ impl From<governance::GovernanceError> for Error {
             governance::GovernanceError::RotationTimelockActive => Error::RotationTimelockActive,
             governance::GovernanceError::RotationExpired => Error::RotationExpired,
             governance::GovernanceError::RotationInProgress => Error::RotationInProgress,
+            governance::GovernanceError::OperationPaused => Error::OperationPaused,
+            governance::GovernanceError::InvalidPauseScope => Error::InvalidPauseScope,
+            governance::GovernanceError::InvalidPauseDuration => Error::InvalidPauseDuration,
+            governance::GovernanceError::NotPaused => Error::NotPaused,
+            governance::GovernanceError::InvalidPauseReason => Error::InvalidPauseReason,
         }
     }
 }
@@ -315,7 +354,58 @@ impl EscrowContract {
         governance::current_storage_version(&env)
     }
 
+    // ----- Emergency circuit breaker -----
+
+    /// Halts `scopes` for `duration_secs` seconds, authorized by any single
+    /// governance signer. Returns the resulting pause record.
+    ///
+    /// In this contract [`SCOPE_INTAKE`] covers `create_appointment`,
+    /// `create_milestone_escrow` and `add_milestone`, while
+    /// [`SCOPE_SETTLEMENT`] covers `confirm_completion`,
+    /// `approve_milestone` and `release_milestone_funds`. **No scope
+    /// reaches `cancel_appointment`, `raise_dispute`, `resolve_dispute`,
+    /// `raise_milestone_dispute` or `resolve_milestone_dispute`** — every
+    /// route by which an escrowed balance can get back to whoever is
+    /// entitled to it is unguarded, so a pause can delay new business but
+    /// can never strand money already held here.
+    pub fn pause(
+        env: Env,
+        caller: Address,
+        scopes: u32,
+        duration_secs: u64,
+        reason: String,
+    ) -> Result<PauseState, Error> {
+        governance::pause(&env, caller, scopes, duration_secs, reason).map_err(Into::into)
+    }
+
+    /// Clears `scopes` from the active pause early. Returns the scopes still
+    /// halted. Any single governance signer may call it — including one who
+    /// did not place the pause.
+    pub fn unpause(env: Env, caller: Address, scopes: u32) -> Result<u32, Error> {
+        governance::unpause(&env, caller, scopes).map_err(Into::into)
+    }
+
+    /// The active pause record, or `None` if nothing is halted — including
+    /// when a pause was placed but has since auto-expired.
+    pub fn get_pause_state(env: Env) -> Option<PauseState> {
+        governance::get_pause_state(&env)
+    }
+
+    /// Bitmask of currently halted scopes; `0` when the contract is open.
+    pub fn paused_scopes(env: Env) -> u32 {
+        governance::paused_scopes(&env)
+    }
+
+    /// Whether any bit of `scope` is currently halted.
+    pub fn is_paused(env: Env, scope: u32) -> bool {
+        governance::is_paused(&env, scope)
+    }
+
     /// Client books a skilled worker and deposits `amount` of `token` into escrow.
+    ///
+    /// Guarded by [`SCOPE_INTAKE`]: this is new money walking into the
+    /// contract, which is the first thing to stop in an incident and the
+    /// one thing that provably cannot strand anything when stopped.
     pub fn create_appointment(
         env: Env,
         appointment_id: u64,
@@ -324,6 +414,10 @@ impl EscrowContract {
         token: Address,
         amount: i128,
     ) -> Result<(), Error> {
+        // Guard first, before auth and before any storage read: a halted
+        // operation should cost nothing and reveal nothing beyond the
+        // already-public pause state.
+        governance::require_not_paused(&env, governance::SCOPE_INTAKE)?;
         client.require_auth();
 
         if amount <= 0 {
@@ -355,7 +449,15 @@ impl EscrowContract {
     }
 
     /// Client confirms the job was completed satisfactorily; releases funds to the worker.
+    ///
+    /// Guarded by [`SCOPE_SETTLEMENT`]. Pausing this withholds a payout, so
+    /// it is worth being explicit that it is a delay and not a seizure: the
+    /// client can still `cancel_appointment` for a full refund and either
+    /// party can still force `raise_dispute` → `resolve_dispute`, exactly
+    /// as they could before any of this existed. The escrowed amount stays
+    /// reachable by whoever is entitled to it throughout.
     pub fn confirm_completion(env: Env, appointment_id: u64) -> Result<(), Error> {
+        governance::require_not_paused(&env, governance::SCOPE_SETTLEMENT)?;
         let key = DataKey::Appointment(appointment_id);
         let mut appointment = Self::read_appointment(&env, &key)?;
 
@@ -378,6 +480,11 @@ impl EscrowContract {
     }
 
     /// Client cancels before the job starts; refunds the client in full.
+    ///
+    /// **Deliberately unguarded by the circuit breaker.** This is the
+    /// client's fund-recovery path; pausing it would convert an incident
+    /// response into a hostage situation. There is no scope value that
+    /// halts this function.
     pub fn cancel_appointment(env: Env, appointment_id: u64) -> Result<(), Error> {
         let key = DataKey::Appointment(appointment_id);
         let mut appointment = Self::read_appointment(&env, &key)?;
@@ -402,6 +509,10 @@ impl EscrowContract {
 
     /// Either the client or the worker can flag a disagreement, freezing the funds
     /// until the admin resolves it.
+    ///
+    /// **Deliberately unguarded by the circuit breaker** — raising a
+    /// dispute is how a party who cannot use the happy path reaches
+    /// `resolve_dispute`, which is itself a recovery route.
     pub fn raise_dispute(env: Env, appointment_id: u64, caller: Address) -> Result<(), Error> {
         caller.require_auth();
 
@@ -422,6 +533,10 @@ impl EscrowContract {
 
     /// Admin/arbiter resolves a dispute by sending the escrowed funds to whichever
     /// side is owed them.
+    ///
+    /// **Deliberately unguarded by the circuit breaker** — this is the
+    /// escrow's ultimate fund-recovery route and must stay reachable no
+    /// matter what else is halted.
     pub fn resolve_dispute(
         env: Env,
         appointment_id: u64,
@@ -469,11 +584,14 @@ impl EscrowContract {
     /// Create a milestone-based escrow. `total_amount` is pulled from the client
     /// immediately. `arbiter` resolves disputes when `mode` is `AdminArbiter`;
     /// `hook_address` is called for `ExternalHook`.
+    ///
+    /// Guarded by [`SCOPE_INTAKE`] — new money entering the contract.
     pub fn create_milestone_escrow(
         env: Env,
         escrow_id: u64,
         init: MilestoneEscrowInit,
     ) -> Result<(), Error> {
+        governance::require_not_paused(&env, governance::SCOPE_INTAKE)?;
         init.client.require_auth();
 
         if init.total_amount <= 0 {
@@ -515,6 +633,10 @@ impl EscrowContract {
 
     /// Add a milestone to a funded escrow. Only the client can add milestones.
     /// The sum of all milestone amounts must equal `total_amount`.
+    ///
+    /// Guarded by [`SCOPE_INTAKE`]: a milestone is a new obligation carved
+    /// out of held funds, so it belongs with the other intake paths even
+    /// though it moves no tokens itself.
     pub fn add_milestone(
         env: Env,
         escrow_id: u64,
@@ -522,6 +644,7 @@ impl EscrowContract {
         amount: i128,
         deadline: u32,
     ) -> Result<u32, Error> {
+        governance::require_not_paused(&env, governance::SCOPE_INTAKE)?;
         let key = DataKey::MilestoneEscrow(escrow_id);
         let mut escrow = Self::read_milestone_escrow(&env, &key)?;
 
@@ -558,7 +681,12 @@ impl EscrowContract {
     }
 
     /// Client approves a milestone, marking it ready for time-locked release.
+    ///
+    /// Guarded by [`SCOPE_SETTLEMENT`] — approval is the step that arms a
+    /// release, so halting settlement without halting approval would just
+    /// queue up a burst of releases the moment the pause lapsed.
     pub fn approve_milestone(env: Env, escrow_id: u64, milestone_index: u32) -> Result<(), Error> {
+        governance::require_not_paused(&env, governance::SCOPE_SETTLEMENT)?;
         let key = DataKey::MilestoneEscrow(escrow_id);
         let mut escrow = Self::read_milestone_escrow(&env, &key)?;
 
@@ -593,11 +721,17 @@ impl EscrowContract {
     /// expired. Permissionless — anyone may call once the conditions are met.
     /// Checks-effects-interactions: milestone status is updated to `Released`
     /// before the token transfer.
+    ///
+    /// Guarded by [`SCOPE_SETTLEMENT`]. Being permissionless is exactly why
+    /// it has to be haltable: if the milestone accounting is ever wrong,
+    /// this is the entrypoint the error gets drained through, and no
+    /// authorization check stands in the way.
     pub fn release_milestone_funds(
         env: Env,
         escrow_id: u64,
         milestone_index: u32,
     ) -> Result<i128, Error> {
+        governance::require_not_paused(&env, governance::SCOPE_SETTLEMENT)?;
         let key = DataKey::MilestoneEscrow(escrow_id);
         let mut escrow = Self::read_milestone_escrow(&env, &key)?;
 
@@ -648,6 +782,9 @@ impl EscrowContract {
     /// The milestone must be in `Approved` or `Pending` status. The escrow
     /// transitions to `Disputed` and no further releases are possible until
     /// the dispute is resolved.
+    ///
+    /// **Deliberately unguarded by the circuit breaker** — the entry to a
+    /// recovery route is itself a recovery route.
     pub fn raise_milestone_dispute(
         env: Env,
         escrow_id: u64,
@@ -694,6 +831,10 @@ impl EscrowContract {
     /// Resolve a disputed milestone. For `AdminArbiter` mode, only the arbiter
     /// can call. For `ExternalHook`, calls the hook contract. `refund_to_client`
     /// determines which party receives the milestone's funds.
+    ///
+    /// **Deliberately unguarded by the circuit breaker** — this is how
+    /// milestone funds reach their rightful owner when the happy path is
+    /// unavailable, including while [`SCOPE_SETTLEMENT`] is halted.
     pub fn resolve_milestone_dispute(
         env: Env,
         escrow_id: u64,

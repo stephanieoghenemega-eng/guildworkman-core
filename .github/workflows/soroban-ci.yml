@@ -27,6 +27,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: soroban-contracts
+          # A run that fails on fmt/clippy has still built the whole
+          # dependency tree; caching it anyway keeps the retry from
+          # recompiling soroban-sdk from scratch.
+          cache-on-failure: true
       - name: Format check
         run: cargo fmt --check
       - name: Clippy (warnings are errors)
