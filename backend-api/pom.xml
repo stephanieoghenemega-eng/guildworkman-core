@@ -219,6 +219,7 @@
 						<escrow.orchestration.confirm-poll-delay-ms>3600000</escrow.orchestration.confirm-poll-delay-ms>
 						<escrow.reconciliation.poll-delay-ms>3600000</escrow.reconciliation.poll-delay-ms>
 						<booking.expiry-sweep-delay-ms>3600000</booking.expiry-sweep-delay-ms>
+						<payments.reconciliation.poll-delay-ms>3600000</payments.reconciliation.poll-delay-ms>
 						<stellar.signing.prepare-poll-delay-ms>3600000</stellar.signing.prepare-poll-delay-ms>
 						<stellar.signing.broadcast-poll-delay-ms>3600000</stellar.signing.broadcast-poll-delay-ms>
 						<stellar.signing.confirm-poll-delay-ms>3600000</stellar.signing.confirm-poll-delay-ms>

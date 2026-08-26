@@ -30,6 +30,11 @@ import static org.springframework.security.config.Customizer.withDefaults;
  *       public {@code client}/{@code skilledWorker} routes are open; everything
  *       else requires authentication, and {@code /api/v1/admin/**} requires the
  *       ADMIN role.</li>
+ *   <li>{@code /api/v1/webhooks/**} is open to the internet but not
+ *       unauthenticated: provider webhooks authenticate the payload with an
+ *       HMAC signature instead of the caller with a token. See the comment on
+ *       the entry in {@code PUBLIC_ENDPOINTS} and
+ *       {@code PaystackWebhookController}.</li>
  *   <li>401/403 are rendered as JSON by {@link RestAuthenticationEntryPoint} /
  *       {@link RestAccessDeniedHandler} so error responses stay consistent.</li>
  * </ul>
@@ -66,6 +71,18 @@ public class SecurityConfig {
             // something to slip in with the concurrency fix.
             "/api/v1/booking/**",
             "/api/v1/chain/events/**",
+            // Paystack webhooks. Unauthenticated because the provider holds no
+            // credential of ours and posts from a rotating IP range; the
+            // HMAC-SHA512 signature over the raw body is the authentication,
+            // checked before the payload is parsed or any state is touched
+            // (PaystackSignatureVerifier). An unsigned or forged delivery gets
+            // a 401 and mutates nothing.
+            //
+            // Note the path: /api/v1/webhooks/**, deliberately NOT under
+            // /api/v1/payments. Every payment route requires a bearer token,
+            // and keeping the public matcher on a separate prefix means no
+            // future widening of this pattern can reach them by accident.
+            "/api/v1/webhooks/**",
             "/v3/api-docs/**",
             "/swagger-ui/**",
             "/swagger-ui.html"

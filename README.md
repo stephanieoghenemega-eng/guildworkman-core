@@ -135,7 +135,11 @@ Core JPA entities in `data/models/`:
 | `SlotReservation` | A claim on one slot of a worker's calendar — the row that makes double-booking impossible (`booking/model/`) |
 | `Consultation` / `ConsultationAvailability` | A pre-booking consultation and its scheduled windows |
 | `Review` | A client's rating/feedback on a completed job |
-| `Transaction` / `TransactionHistory` | Paystack payment records |
+| `LedgerAccount` / `LedgerTransaction` / `LedgerEntry` | The append-only double-entry ledger — the authoritative record of what money moved (`payment/model/`) |
+| `Payment` / `Payout` | Derived state for an inbound charge and an outbound transfer, each with an explicit lifecycle (`payment/model/`) |
+| `ProcessedWebhookEvent` | One row per provider event taken responsibility for — the idempotency guard that stops a retry crediting twice |
+| `ReconciliationDiscrepancy` | A recorded disagreement between the platform's books and Paystack, for an operator to act on |
+| `Transaction` / `TransactionHistory` | A client-facing projection of the ledger; `Transaction` is rebuilt from `Payment`, history is a query over it |
 | `Notification`, `Admin` | Notification records; admin-role user |
 
 ### API surface
@@ -149,6 +153,9 @@ envelope: **`ApiResponse { data, status }`**.
 | `BookingController` | `/api/v1/booking` | Concurrency-safe booking: `reservations` (hold a slot), `confirm`, release, and `workers/{id}/availability` (a worker's taken slots) |
 | `SkilledWorkerController` | `/api/v1/skilledWorker` | `registerSkilledWorker`, `login`, `addSkill`, `findById`, `findByFullName`, `updateSkilledWorkerProfile`, `nearby` |
 | `MailController` | `/api/v1/mail` | `sendMail` (transactional email) |
+| `PaymentController` | `/api/v1/payments` | Start a payment (returns a Paystack checkout URL), read its state, read the journal entries it produced |
+| `PaystackWebhookController` | `/api/v1/webhooks` | `paystack` — signature-verified, idempotent event receiver. The only unauthenticated route that can move money; the HMAC over the raw body is the authentication |
+| `PaymentReconciliationController` | `/api/v1/payments/reconciliation` | ADMIN: discrepancies, trial balance, run a sweep |
 
 Mutations on appointments take the id as a **query param**
 (`?appointmentId=`), and `cancel`/`update` are `PUT`, `delete` is `DELETE`.
@@ -276,12 +283,20 @@ integration:
   client and per-role Stellar keypair handling that doesn't exist here yet.
   The intended flow is spelled out in
   [`soroban-contracts/README.md`](soroban-contracts/README.md#suggested-backend-integration-not-yet-wired-in).
-- 🔌 **Payments/Admin/Reviews have no REST surface.** `PaymentController` and
-  `MapController` exist but are commented out; `AdminServiceImpl` has no
-  controller; `ReviewServiceImpl` and its DTOs are implemented and tested but
-  not exposed. The business logic is there — the endpoints aren't.
-- ⚠️ **No escrow, still.** Payments go through Paystack; the Soroban escrow
-  contract is not in the loop (see the first item above).
+- 🔌 **Admin/Reviews have no REST surface.** `MapController` exists but is
+  commented out; `AdminServiceImpl` has no controller; `ReviewServiceImpl` and
+  its DTOs are implemented and tested but not exposed. The business logic is
+  there — the endpoints aren't.
+- 🔌 **Payouts are recorded, not initiated.** The ledger books
+  `transfer.success`/`failed`/`reversed` events, but nothing here calls
+  Paystack's Transfer API — that needs transfer-recipient management, which is
+  its own piece of work. See
+  [`backend-api/docs/PAYMENTS_LEDGER.md`](backend-api/docs/PAYMENTS_LEDGER.md#follow-ups-out-of-scope-for-this-pr).
+- ⚠️ **No escrow, still.** The fiat leg goes through Paystack and now has its
+  own double-entry ledger and reconciliation; the Soroban escrow contract is
+  not in the loop (see the first item above). The two legs are tracked
+  separately, and consolidating them into one set of books is the next step —
+  `Payment`/`Payout` already carry a provider discriminator for it.
 
 ## Branching & contributing
 

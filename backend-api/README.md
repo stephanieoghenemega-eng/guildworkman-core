@@ -65,7 +65,9 @@ controllers/       REST endpoints (@RestController)
 services/
   ServiceUtils/        service interfaces
   implmentations/      interface implementations
-  paystack/            Paystack payment integration
+  paystack/            legacy Paystack initiate/verify helper (superseded, see payment/)
+payment/           payments ledger: Paystack webhooks, double-entry journal,
+                   payout state machine, reconciliation (docs/PAYMENTS_LEDGER.md)
 data/models/       JPA entities
 dto/requests/      inbound request payloads
 dto/responses/     outbound response payloads
@@ -98,7 +100,11 @@ Core JPA entities in `data/models/`:
 | `Consultation` | N:1 `Client`, N:1 `SkilledWorker`, 1:1 `ConsultationAvailability` | A pre-booking consultation between client and worker |
 | `ConsultationAvailability` | 1:1 `Consultation` | Scheduled availability windows for a consultation |
 | `Review` | N:1 (worker/appointment) | A client's rating/feedback on a completed job |
-| `Transaction` / `TransactionHistory` | M:N | Payment records (Paystack) |
+| `LedgerAccount` / `LedgerTransaction` / `LedgerEntry` | 1:N (`payment/model/`) | The append-only double-entry ledger — the authoritative record of what money moved |
+| `Payment` / `Payout` | by reference (`payment/model/`) | Derived state for an inbound charge and an outbound transfer, each with an explicit lifecycle |
+| `ProcessedWebhookEvent` | — (`payment/model/`) | One row per provider event taken responsibility for; the idempotency guard |
+| `ReconciliationDiscrepancy` | — (`payment/model/`) | A recorded disagreement between the books and Paystack |
+| `Transaction` / `TransactionHistory` | M:N | A client-facing projection of the ledger, keyed by `payment_reference` |
 | `Notification` | — | In-app/email notification records |
 | `Admin` | — | Admin-role user |
 
@@ -116,7 +122,12 @@ Core JPA entities in `data/models/`:
   an external KMS/HSM in production), concurrency-safe sequence numbers from a
   channel-account pool, and fee-bump retries under a bounded fee ceiling
   ([`docs/STELLAR_SIGNING.md`](docs/STELLAR_SIGNING.md))
-- Payment initiation/verification via **Paystack** (service layer + `PaymentServiceImpl`)
+- Payments ledger — signature-verified Paystack webhooks, an append-only
+  double-entry journal as the source of truth, explicit payment/payout state
+  machines, and a scheduled reconciliation job that reports divergence from the
+  provider rather than silently correcting it. A payment completes even if the
+  client never returns from the redirect
+  ([`docs/PAYMENTS_LEDGER.md`](docs/PAYMENTS_LEDGER.md))
 - Transactional email sending (mail service, provider-agnostic API key + URL config)
 - Reviews and worker ratings (`ReviewServiceImpl`)
 - Admin operations (`AdminServiceImpl`)
@@ -128,11 +139,12 @@ A few service-layer pieces exist but currently have **no REST endpoint**
 exposing them — the business logic is implemented and (where applicable)
 tested, but not yet reachable over HTTP:
 
-- **`PaymentController`** (`/payment`) and **`MapController`**
-  (`/showMap`) exist in the tree but are commented out and inactive. Payment
-  logic lives in `services/paystack/PaymentServiceImpl` and can be
-  re-exposed by uncommenting `PaymentController` once its request/response
-  wiring is finalized.
+- **`MapController`** (`/showMap`) exists in the tree but is commented out and
+  inactive.
+- **Payouts are recorded, not initiated.** The ledger books
+  `transfer.success`/`failed`/`reversed` events, but nothing calls Paystack's
+  Transfer API — that needs transfer-recipient management, which is its own
+  piece of work ([`docs/PAYMENTS_LEDGER.md`](docs/PAYMENTS_LEDGER.md#follow-ups-out-of-scope-for-this-pr)).
 - **`AdminServiceImpl`** has no corresponding `AdminController` yet.
 - **Reviews** (`ReviewServiceImpl`, `PostReviewRequest`/`EditReviewRequest`)
   aren't exposed on `ClientController` or `SkilledWorkerController` today,
@@ -175,6 +187,14 @@ export the values into your shell, IDE run configuration, or `docker run --env-f
 | `paystack.secret.key` | `PAYSTACK_SECRET_KEY` | *(empty — required)* |
 | `paystack.verify.payment.url` | `PAYSTACK_VERIFY_URL` | `https://api.paystack.co/transaction/verify` |
 | `paystack.initiate.payment` | `PAYSTACK_INITIATE_URL` | `https://api.paystack.co/transaction/initialize` |
+| `payments.paystack.base-url` | `PAYSTACK_BASE_URL` | `https://api.paystack.co` |
+| `payments.paystack.secret-key` | `PAYSTACK_SECRET_KEY` | *(empty — an empty secret rejects every webhook)* |
+| `payments.paystack.request-timeout` | `PAYSTACK_REQUEST_TIMEOUT` | `PT10S` |
+| `payments.platform-fee-bps` | `PAYMENTS_PLATFORM_FEE_BPS` | `250` (2.5%) |
+| `payments.default-currency` | `PAYMENTS_DEFAULT_CURRENCY` | `NGN` |
+| `payments.reconciliation-grace` | `PAYMENTS_RECONCILIATION_GRACE` | `PT15M` |
+| `payments.reconciliation-batch-size` | `PAYMENTS_RECONCILIATION_BATCH_SIZE` | `50` |
+| `payments.reconciliation.poll-delay-ms` | `PAYMENTS_RECONCILIATION_POLL_DELAY_MS` | `60000` |
 | `spring.h2.console.enabled` | `H2_CONSOLE_ENABLED` | `false` |
 | `stellar.signing.enabled` | `STELLAR_SIGNING_ENABLED` | `true` (set `false` to pause the submission workers) |
 | `stellar.signing.provider` | `STELLAR_SIGNING_PROVIDER` | `local` (use `kms` in production) |
@@ -351,6 +371,31 @@ CORS: configured globally (see below) — no per-controller `@CrossOrigin`.
 | POST | `/sendMail` | Send a transactional email |
 
 CORS: configured globally (see below) — no per-controller `@CrossOrigin`.
+
+### Payments — `/api/v1/payments` and `/api/v1/webhooks`
+
+Full write-up: [`docs/PAYMENTS_LEDGER.md`](docs/PAYMENTS_LEDGER.md).
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST | `/api/v1/webhooks/paystack` | HMAC signature | Receive a Paystack event. Idempotent; always 200 once the signature verifies |
+| POST | `/api/v1/payments` | Bearer | Start a payment; returns a Paystack checkout URL (201) |
+| GET | `/api/v1/payments/{reference}` | Bearer | Read a payment's current state |
+| GET | `/api/v1/payments/{reference}/ledger` | Bearer | The journal entries that payment produced |
+| GET | `/api/v1/payments/reconciliation/discrepancies` | ADMIN | List findings (`?status=OPEN&limit=50`) |
+| GET | `/api/v1/payments/reconciliation/discrepancies/by-reference/{reference}` | ADMIN | Findings for one reference |
+| POST | `/api/v1/payments/reconciliation/discrepancies/{id}` | ADMIN | Acknowledge or resolve a finding |
+| GET | `/api/v1/payments/reconciliation/trial-balance` | ADMIN | Debits vs credits, plus each account's balance |
+| POST | `/api/v1/payments/reconciliation/run` | ADMIN | Run a reconciliation sweep now |
+
+The webhook is the **only** unauthenticated route that can move money: it
+authenticates the payload (HMAC-SHA512 over the raw body) rather than the
+caller, and lives outside `/api/v1/payments` so no future widening of the
+permit-all matcher can reach the token-gated routes. A client never has to
+return from the Paystack redirect — capture is driven by the webhook.
+
+**Deploying to an existing database?** One `ALTER TABLE` is required; see
+[`docs/PAYMENTS_LEDGER.md`](docs/PAYMENTS_LEDGER.md#schema--migrations).
 
 ### CORS
 

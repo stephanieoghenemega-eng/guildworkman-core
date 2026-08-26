@@ -6,6 +6,12 @@ import com.guildworkman.api.booking.service.SlotUnavailableException;
 import com.guildworkman.api.escrow.service.EscrowOrchestrationNotFoundException;
 import com.guildworkman.api.escrow.service.ReconciliationRequeueNotAllowedException;
 import com.guildworkman.api.exceptions.*;
+import com.guildworkman.api.payment.service.DiscrepancyNotFoundException;
+import com.guildworkman.api.payment.service.IllegalPaymentTransitionException;
+import com.guildworkman.api.payment.service.InvalidWebhookSignatureException;
+import com.guildworkman.api.payment.service.MalformedWebhookPayloadException;
+import com.guildworkman.api.payment.service.PaymentNotFoundException;
+import com.guildworkman.api.payment.service.PaystackClientException;
 import com.guildworkman.api.signing.custody.SigningProviderException;
 import com.guildworkman.api.signing.custody.UnknownKeyReferenceException;
 import com.guildworkman.api.signing.service.ChannelAccountAlreadyRegisteredException;
@@ -208,6 +214,56 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         log.error("Signing provider failure", exception);
         return respond(HttpStatus.SERVICE_UNAVAILABLE, "signing-unavailable",
                 "Signing unavailable", "The signing service could not sign this request. Please try again later.");
+    }
+
+    @ExceptionHandler(PaymentNotFoundException.class)
+    public ResponseEntity<ProblemDetail> handlePaymentNotFound(PaymentNotFoundException exception) {
+        return respond(HttpStatus.NOT_FOUND, "payment-not-found",
+                "Payment not found", exception.getMessage());
+    }
+
+    @ExceptionHandler(DiscrepancyNotFoundException.class)
+    public ResponseEntity<ProblemDetail> handleDiscrepancyNotFound(DiscrepancyNotFoundException exception) {
+        return respond(HttpStatus.NOT_FOUND, "reconciliation-discrepancy-not-found",
+                "Reconciliation discrepancy not found", exception.getMessage());
+    }
+
+    /** The request was well-formed; it just doesn't fit the payment's current state. */
+    @ExceptionHandler(IllegalPaymentTransitionException.class)
+    public ResponseEntity<ProblemDetail> handleIllegalPaymentTransition(IllegalPaymentTransitionException exception) {
+        return respond(HttpStatus.CONFLICT, "illegal-payment-transition",
+                "Illegal payment state transition", exception.getMessage());
+    }
+
+    /**
+     * Deliberately terse. An attacker probing the webhook endpoint should
+     * learn that the signature was wrong and nothing else — not which header
+     * was missing, not how much of a forged prefix matched, and not whether
+     * the account is configured at all. The specifics are logged server-side
+     * by {@code PaystackSignatureVerifier}.
+     */
+    @ExceptionHandler(InvalidWebhookSignatureException.class)
+    public ResponseEntity<ProblemDetail> handleInvalidWebhookSignature(InvalidWebhookSignatureException exception) {
+        return respond(HttpStatus.UNAUTHORIZED, "invalid-webhook-signature",
+                "Webhook signature rejected", "The webhook signature could not be verified");
+    }
+
+    @ExceptionHandler(MalformedWebhookPayloadException.class)
+    public ResponseEntity<ProblemDetail> handleMalformedWebhookPayload(MalformedWebhookPayloadException exception) {
+        return respond(HttpStatus.BAD_REQUEST, "malformed-webhook-payload",
+                "Malformed webhook payload", exception.getMessage());
+    }
+
+    /**
+     * 502, not 500: the platform is working, the upstream payment provider is
+     * not, and a caller that retries has a reasonable chance of succeeding.
+     */
+    @ExceptionHandler(PaystackClientException.class)
+    public ResponseEntity<ProblemDetail> handlePaystackClient(PaystackClientException exception) {
+        log.warn("Paystack call failed: {}", exception.getMessage());
+        return respond(HttpStatus.BAD_GATEWAY, "payment-provider-unavailable",
+                "Payment provider unavailable",
+                "The payment provider could not be reached or refused the request. Please try again.");
     }
 
     @ExceptionHandler(InvalidPasswordException.class)
